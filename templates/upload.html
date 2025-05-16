@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Puralox BET Analyzer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body { background-color: #f8f9fa; padding: 2rem; }
+        .card { border-radius: 1rem; box-shadow: 0 0 15px rgba(0,0,0,0.05); padding: 2rem; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1 class="mb-4 text-center">🧪 Puralox BET Data Uploader</h1>
+    <p class="text-center text-muted mb-5">Upload your BET Excel files or view previously analyzed files.</p>
+    <div class="row justify-content-center g-4">
+        <div class="col-md-6">
+            <div class="card bg-white">
+                <h4 class="mb-3">📤 Upload New File</h4>
+                <form method="post" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <input class="form-control" type="file" name="file" accept=".xlsx" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 btn-lg">Upload File</button>
+                </form>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card bg-light text-center d-flex flex-column justify-content-center h-100">
+                <h4 class="mb-3">📚 View Uploaded Files</h4>
+                <p class="text-muted">Explore files you've already uploaded and their BET data.</p>
+                <a href="/files" class="btn btn-outline-secondary btn-lg mt-2">Go to File List</a>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card bg-light text-center d-flex flex-column justify-content-center h-100">
+                <h4 class="mb-3">🔌 API Documentation</h4>
+                <p class="text-muted">View how to access processed data via REST API.</p>
+                <a href="/api" class="btn btn-outline-info btn-lg mt-2">View API Guide</a>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

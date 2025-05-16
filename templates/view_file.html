@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BET Data View</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <style>
+        body { padding: 2rem; background-color: #f5f7fa; }
+        .section { background: white; border-radius: 1rem; padding: 1.5rem; margin-bottom: 2rem;
+                   box-shadow: 0 0 15px rgba(0,0,0,0.05); }
+        h2 { font-size: 1.5rem; margin-bottom: 1rem; border-bottom: 1px solid #dee2e6; padding-bottom: 0.5rem; }
+        table { font-size: 0.92rem; }
+        .table th { background-color: #f0f0f0; }
+        .btn-container { margin-bottom: 1.5rem; }
+        pre { background: #eef; padding: 1rem; border-radius: .5rem; max-height: 200px; overflow: auto; }
+    </style>
+</head>
+<body>
+<div class="container btn-container">
+    <button id="pushBtn" class="btn btn-primary me-2">Push to eLabFTW</button>
+    <button id="fetchBtn" class="btn btn-secondary">Fetch Experiments</button>
+    <div class="mt-3">
+      <strong>Push Result:</strong>
+      <pre id="pushResult">—</pre>
+    </div>
+    <div class="mt-3">
+      <strong>Fetched Experiments:</strong>
+      <pre id="fetchResult">—</pre>
+    </div>
+</div>
+
+<div class="container">
+    <h1 class="mb-4">📄 BET File Detail</h1>
+    <a href="/files" class="btn btn-secondary mb-4">← Back to Files</a>
+
+    <div class="section">
+        <h2>🗂️ File Info</h2>
+        {{ info.replace(['NaN','None','nan'],'—').to_html(classes='table table-striped table-hover table-bordered rounded', index=False) | safe }}
+    </div>
+
+    <div class="section">
+        <h2>📊 BET Parameters</h2>
+        {{ bet.replace(['NaN','None','nan'],'—').to_html(classes='table table-striped table-hover table-bordered rounded', index=False) | safe }}
+    </div>
+
+    <div class="section">
+        <h2>⚙️ Technical Info</h2>
+        {{ tech.replace(['NaN','None','nan'],'—').to_html(classes='table table-striped table-hover table-bordered rounded', index=False) | safe }}
+    </div>
+
+    <div class="section">
+        <h2>📌 Plot Column Headers</h2>
+        {{ columns.replace(['NaN','None','nan'],'—').to_html(classes='table table-striped table-hover table-bordered rounded', index=False) | safe }}
+    </div>
+
+    <div class="section">
+        <h2>📈 BET Data Points</h2>
+        <table id="pointsTable" class="table table-striped table-hover table-bordered table-sm">
+            <thead>
+                <tr>
+                    {% for col in points.columns %}
+                        <th>{{ col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in points.itertuples(index=False) %}
+                    <tr>
+                        {% for value in row %}
+                            <td>{{ value if value not in [None,'nan','NaN'] else '—' }}</td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+<script>
+    $(document).ready(function () {
+        $('#pointsTable').DataTable({ scrollX: true, pageLength: 10 });
+    });
+</script>
+<script>
+  // Push this file’s data as a new experiment
+  document.getElementById("pushBtn").addEventListener("click", () => {
+    document.getElementById("pushResult").textContent = "Posting…";
+    fetch(`/push/{{ file_id }}`, { method: "POST" })
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById("pushResult").textContent =
+          JSON.stringify(data, null, 2);
+      })
+      .catch(err => {
+        document.getElementById("pushResult").textContent =
+          "Error: " + err;
+      });
+  });
+
+  // Fetch the latest experiments for debugging
+  document.getElementById("fetchBtn").addEventListener("click", () => {
+    document.getElementById("fetchResult").textContent = "Loading…";
+    fetch('/api/elab/experiments')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById("fetchResult").textContent =
+          JSON.stringify(data, null, 2);
+      })
+      .catch(err => {
+        document.getElementById("fetchResult").textContent =
+          "Error: " + err;
+      });
+  });
+</script>
+</body>
+</html>
