@@ -1,4 +1,3 @@
-````markdown
 # Puralox — BET Data Processor & eLabFTW Integrator
 
 A Flask application to:
