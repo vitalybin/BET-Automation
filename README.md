@@ -366,7 +366,7 @@ docker-compose up --build -d
 
 ## 📜 License
 
-MIT License — see [LICENSE](LICENSE)
+License — All the rights of Code and Development belongs to KIT.
 
 ---
 
