@@ -27,6 +27,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from .config import UPLOAD_FOLDER, DB_NAME
 from .db_manager import DatabaseManager
 from .excel_processor import ExcelProcessor
+from .template_processor import TemplateProcessor
 import requests
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
@@ -39,6 +40,19 @@ MEASUREMENT_DESC = "BET Parameters and Data Points (Reference Below)"
 # ──────────────────────────────────────────────────────────────────────
 
 class PuraloxApp:
+
+    def _get_templates(self):
+        """Fetch the list of experiment templates from eLabFTW."""
+        url = f"{ELABFTW_URL}/experiments_templates?limit=100"
+        resp = requests.get(
+            url,
+            headers={"Authorization": ELABFTW_TOKEN},
+            verify=self.verify_ssl
+        )
+        if not resp.ok:
+            print(f"[ERROR] Fetching templates: {resp.status_code} {resp.text}")
+            return []
+        return resp.json()
 
     def __init__(self):
         base = os.path.abspath(os.path.dirname(__file__))
@@ -103,92 +117,55 @@ class PuraloxApp:
 
         @self.app.route("/push/<int:file_id>", methods=["POST"])
         def push_to_elab(file_id):
-            # 1) fetch data
-            fi   = self.db.fetchall_dict(f"SELECT * FROM file_info WHERE id={file_id}")[0]
-            bet  = self.db.fetchall_dict(f"SELECT * FROM bet_parameters WHERE file_info_id={file_id}")
-            tech = self.db.fetchall_dict(f"SELECT * FROM technical_info WHERE file_info_id={file_id}")
-            pts  = self.db.fetchall_dict(f"SELECT * FROM bet_data_points WHERE file_info_id={file_id}")
-            equipment = fi.get("comment4") or EQUIPMENT_NAME
+            try:
+                template_id = request.form.get("template_id", type=int)
+                if not template_id:
+                    return jsonify({"error": "Missing template_id"}), 400
 
-            # 2) build HTML body
-            html  = f"<h1>Experiment: {fi['file_name']}</h1>"
-            html += f"<p><strong>ID:</strong> {file_id}</p>"
-            html += f"<p><strong>Date:</strong> {fi['date_of_measurement']} {fi['time_of_measurement']}</p>"
-            html += f"<p><strong>Serial #:</strong> {fi['serial_number']}</p>"
-            html += f"<p><strong>Version:</strong> {fi.get('version','—')}</p>"
-            html += f"<p><strong>Scientist:</strong> {SCIENTIST_NAME}</p>"
-            html += "<h2>Goal</h2>"
-            html += f"<p>The goal of the experiment <b>{fi['file_name']}</b> referred to the project BET Data Analysis. " \
-                    f"It was done by <b>{SCIENTIST_NAME}</b> on <b>{fi['date_of_measurement']} {fi['time_of_measurement']}</b>.</p>"
-            html += "<h2>Work Flow</h2>"
-            html += f"<p>Executed on <b>{EQUIPMENT_NAME}</b> to measure <b>{MEASUREMENT_DESC}</b>.</p>"
-            html += "<h2>Results</h2>"
-            html += "<p>Shows BET parameters, technical info, and sample data points below.</p>"
+                from .template_processor import TemplateProcessor
+                processor = TemplateProcessor(verify_ssl=self.verify_ssl)
 
-            html += "<h3>BET Parameters</h3><ul>"
-            for row in bet:
-                for k,v in row.items():
-                    html += f"<li>{k}: {v}</li>"
-            html += "</ul>"
+                raw_template = processor.fetch_template_body(template_id)
+                html = processor.render_template_with_data(raw_template, file_id)
 
-            html += "<h3>Technical Info</h3><ul>"
-            for row in tech:
-                for k,v in row.items():
-                    html += f"<li>{k}: {v}</li>"
-            html += "</ul>"
+                _, status, headers = self.exp_api.post_experiment_with_http_info(body={})
+                if status != 201:
+                    return jsonify({"error": "Experiment creation failed"}), 500
+                exp_id = headers["Location"].split("/")[-1]
 
-            html += "<h3>Data Points (first 10)</h3><table border='1'><tr><th>No</th><th>p/p0</th><th>p/va_p0_p</th></tr>"
-            for r in pts[:10]:
-                html += f"<tr><td>{r['no']}</td><td>{r['p_p0']}</td><td>{r['p_va_p0_p']}</td></tr>"
-            html += "</table>"
+                self.exp_api.patch_experiment(exp_id, body={"title": f"File {file_id}", "body": html})
 
-            # 3) create empty experiment
-            _, status, headers = self.exp_api.post_experiment_with_http_info(body={})
-            if status != 201:
-                return jsonify(error=f"Create failed ({status})"), 500
-            exp_id = headers["Location"].rstrip("/").split("/")[-1]
+                pts = processor.db.fetchall_dict(f"SELECT * FROM bet_data_points WHERE file_info_id={file_id}")
+                x = np.array([r['p_p0'] for r in pts])
+                y = np.array([r['p_va_p0_p'] for r in pts])
+                fig, ax = plt.subplots()
+                ax.scatter(x, y)
+                fit = np.polyfit(x, y, 1)
+                ax.plot(x, np.poly1d(fit)(x), linestyle="--")
+                img_buf = BytesIO()
+                fig.savefig(img_buf, format="PNG", bbox_inches="tight")
+                plt.close(fig)
+                img_buf.seek(0)
 
-            # 4) patch title and body
-            html = html.replace(f"<strong>ID:</strong> {file_id}", f"<strong>ID:</strong> {exp_id}")
-            self.exp_api.patch_experiment(exp_id, body={"title": fi["file_name"], "body": html})
+                pdf_buf = BytesIO()
+                doc = SimpleDocTemplate(pdf_buf, pagesize=letter)
+                doc.build([RLImage(img_buf, width=400, height=300)])
+                pdf_buf.seek(0)
 
-            # 5) generate plot
-            x = np.array([r['p_p0']       for r in pts])
-            y = np.array([r['p_va_p0_p']   for r in pts])
-            coeffs = np.polyfit(x, y, 1)
-            fit_fn = np.poly1d(coeffs)
-            fig, ax = plt.subplots()
-            ax.scatter(x, y, s=20)
-            ax.plot(x, fit_fn(x), linestyle='--')
-            ax.set_title("BET Plot")
-            ax.set_xlabel("p/p0")
-            ax.set_ylabel("p/va_p0_p")
-            img_buf = BytesIO()
-            fig.savefig(img_buf, format="PNG", bbox_inches="tight")
-            plt.close(fig)
-            img_buf.seek(0)
+                files = {'file': (f"plot_file_{file_id}.pdf", pdf_buf.read(), 'application/pdf')}
+                attach_url = f"{ELABFTW_URL}/experiments/{exp_id}/uploads"
+                resp = requests.post(attach_url, headers={"Authorization": ELABFTW_TOKEN}, files=files, verify=self.verify_ssl)
+                if not resp.ok:
+                    return jsonify({"error": "PDF upload failed", "details": resp.text}), 500
 
-            # 6) build PDF with only image
-            pdf_buf = BytesIO()
-            doc = SimpleDocTemplate(pdf_buf, pagesize=letter)
-            doc.build([ RLImage(img_buf, width=400, height=300) ])
-            pdf_buf.seek(0)
+                tag_url = f"{ELABFTW_URL}/experiments/{exp_id}/tags"
+                requests.post(tag_url, headers={"Authorization": ELABFTW_TOKEN, "Content-Type": "application/json"},
+                              json={"tag": "BET_result"}, verify=self.verify_ssl)
 
-            # 7) upload PDF
-            files = {'file': (f"BET_Plot_{fi['file_name']}.pdf", pdf_buf.read(), 'application/pdf')}
-            attach_url = f"{ELABFTW_URL}/experiments/{exp_id}/uploads"
-            resp = requests.post(attach_url, headers={"Authorization": ELABFTW_TOKEN}, files=files, verify=self.verify_ssl)
-            if not resp.ok:
-                return jsonify(error="PDF upload failed", status=resp.status_code, resp=resp.text), 500
+                return jsonify({"status": "success", "experiment_id": exp_id}), 201
 
-            # 8) tag
-            tag_url = f"{ELABFTW_URL}/experiments/{exp_id}/tags"
-            requests.post(tag_url, headers={"Authorization": ELABFTW_TOKEN, "Content-Type":"application/json"},
-                          json={"tag":"BET_result"}, verify=self.verify_ssl)
-
-            # 9) return JSON
-            new = self.exp_api.get_experiment(exp_id)
-            return jsonify(new.to_dict()), 201
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
 
         @self.app.route("/api/elab/experiments", methods=["GET"])
         def fetch_elab_experiments():
@@ -196,7 +173,31 @@ class PuraloxApp:
                 exps = self.exp_api.read_experiments(limit=10)
                 return jsonify([e.to_dict() for e in exps]), 200
             except ApiException as e:
-                return jsonify(error=str(e)), 500
+                return jsonify({"error": "API Exception", "details": str(e)}), e.status if hasattr(e, 'status') else 500
+            except Exception as e:
+                return jsonify({"error": "Unexpected error", "details": str(e)}), 500
+
+        @self.app.route("/api/elab/templates", methods=["GET"])
+        def get_templates():
+            try:
+                templates = self._get_templates()
+                return jsonify([{"id": t["id"], "title": t["title"]} for t in templates])
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route("/api/elab/template/<int:template_id>", methods=["GET"])
+        def get_template_body(template_id):
+            try:
+                response = requests.get(
+                    f"{ELABFTW_URL}/experiments_templates/{template_id}",
+                    headers={"Authorization": ELABFTW_TOKEN},
+                    verify=self.verify_ssl
+                )
+                response.raise_for_status()
+                data = response.json()
+                return jsonify({"body": data.get("body", "")})
+            except requests.RequestException as e:
+                return jsonify({"error": f"Failed to fetch template: {str(e)}"}), 500
 
         @self.app.route("/api")
         def api_info():
@@ -204,7 +205,6 @@ class PuraloxApp:
 
     def run(self):
         self.app.run(host="0.0.0.0", port=5000, debug=True)
-
 
 if __name__ == "__main__":
     PuraloxApp().run()

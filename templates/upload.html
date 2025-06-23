@@ -6,6 +6,7 @@
     <style>
         body { background-color: #f8f9fa; padding: 2rem; }
         .card { border-radius: 1rem; box-shadow: 0 0 15px rgba(0,0,0,0.05); padding: 2rem; }
+        #templateContent { max-height: 300px; overflow-y: auto; background: #fff; padding: 1rem; border: 1px solid #ddd; border-radius: 0.5rem; margin-top: 1rem; }
     </style>
 </head>
 <body>
@@ -13,6 +14,8 @@
     <h1 class="mb-4 text-center">🧪 Puralox BET Data Uploader</h1>
     <p class="text-center text-muted mb-5">Upload your BET Excel files or view previously analyzed files.</p>
     <div class="row justify-content-center g-4">
+
+        <!-- Upload File -->
         <div class="col-md-6">
             <div class="card bg-white">
                 <h4 class="mb-3">📤 Upload New File</h4>
@@ -24,6 +27,8 @@
                 </form>
             </div>
         </div>
+
+        <!-- View Uploaded Files -->
         <div class="col-md-6">
             <div class="card bg-light text-center d-flex flex-column justify-content-center h-100">
                 <h4 class="mb-3">📚 View Uploaded Files</h4>
@@ -31,6 +36,8 @@
                 <a href="/files" class="btn btn-outline-secondary btn-lg mt-2">Go to File List</a>
             </div>
         </div>
+
+        <!-- API Documentation -->
         <div class="col-md-6">
             <div class="card bg-light text-center d-flex flex-column justify-content-center h-100">
                 <h4 class="mb-3">🔌 API Documentation</h4>
@@ -38,7 +45,50 @@
                 <a href="/api" class="btn btn-outline-info btn-lg mt-2">View API Guide</a>
             </div>
         </div>
+
+        <!-- Select eLabFTW Template -->
+        <div class="col-md-6">
+            <div class="card bg-white">
+                <h4 class="mb-3">📑 eLabFTW Templates</h4>
+                <label for="templateSelector" class="form-label">Choose Template</label>
+                <select id="templateSelector" class="form-select mb-3" onchange="loadTemplateBody()">
+                    <option selected disabled>Select a template</option>
+                </select>
+                <div>
+                    <strong>Template HTML Preview:</strong>
+                    <div id="templateContent"><em>No template selected</em></div>
+                </div>
+            </div>
+        </div>
+
     </div>
 </div>
+
+<script>
+    async function fetchTemplates() {
+        try {
+            const res = await fetch('/api/elab/templates');
+            const templates = await res.json();
+            const selector = document.getElementById('templateSelector');
+            templates.forEach(t => {
+                const option = document.createElement('option');
+                option.value = t.id;
+                option.textContent = t.title;
+                selector.appendChild(option);
+            });
+        } catch (error) {
+            console.error("Failed to load templates:", error);
+        }
+    }
+
+    async function loadTemplateBody() {
+        const id = document.getElementById('templateSelector').value;
+        const res = await fetch(`/api/elab/template/${id}`);
+        const data = await res.json();
+        document.getElementById('templateContent').innerHTML = data.body || "<em>No content found</em>";
+    }
+
+    window.onload = fetchTemplates;
+</script>
 </body>
 </html>

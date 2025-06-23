@@ -17,15 +17,31 @@
 </head>
 <body>
 <div class="container btn-container">
-    <button id="pushBtn" class="btn btn-primary me-2">Push to eLabFTW</button>
-    <button id="fetchBtn" class="btn btn-secondary">Fetch Experiments</button>
-    <div class="mt-3">
-      <strong>Push Result:</strong>
-      <pre id="pushResult">—</pre>
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <label for="templateSelector" class="form-label">Select Template:</label>
+            <select id="templateSelector" class="form-select"></select>
+        </div>
+        <div class="col-md-6 d-flex align-items-end">
+            <button id="pushBtn" class="btn btn-primary me-2">Push to eLabFTW</button>
+            <button id="fetchBtn" class="btn btn-secondary">Fetch Experiments</button>
+        </div>
     </div>
-    <div class="mt-3">
-      <strong>Fetched Experiments:</strong>
-      <pre id="fetchResult">—</pre>
+
+    <div class="mb-3">
+        <strong>Push Result:</strong>
+        <pre id="pushResult">—</pre>
+    </div>
+    <div class="mb-3">
+        <strong>Fetched Experiments:</strong>
+        <pre id="fetchResult">—</pre>
+    </div>
+
+    <div class="mb-3">
+        <strong>Template Preview:</strong>
+        <div class="p-3 border bg-white rounded" id="templatePreview" style="max-height: 300px; overflow-y: auto;">
+            <em>Select a template to view its content</em>
+        </div>
     </div>
 </div>
 
@@ -82,38 +98,63 @@
 <script>
     $(document).ready(function () {
         $('#pointsTable').DataTable({ scrollX: true, pageLength: 10 });
+        loadTemplates();
     });
-</script>
-<script>
-  // Push this file’s data as a new experiment
-  document.getElementById("pushBtn").addEventListener("click", () => {
-    document.getElementById("pushResult").textContent = "Posting…";
-    fetch(`/push/{{ file_id }}`, { method: "POST" })
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById("pushResult").textContent =
-          JSON.stringify(data, null, 2);
-      })
-      .catch(err => {
-        document.getElementById("pushResult").textContent =
-          "Error: " + err;
-      });
-  });
 
-  // Fetch the latest experiments for debugging
-  document.getElementById("fetchBtn").addEventListener("click", () => {
-    document.getElementById("fetchResult").textContent = "Loading…";
-    fetch('/api/elab/experiments')
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById("fetchResult").textContent =
-          JSON.stringify(data, null, 2);
-      })
-      .catch(err => {
-        document.getElementById("fetchResult").textContent =
-          "Error: " + err;
-      });
-  });
+    async function loadTemplates() {
+        const res = await fetch('/api/elab/templates');
+        const templates = await res.json();
+        const selector = document.getElementById('templateSelector');
+        selector.innerHTML = '';
+        templates.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.title;
+            selector.appendChild(opt);
+        });
+        if (templates.length > 0) {
+            previewTemplate(templates[0].id);
+        }
+    }
+
+    async function previewTemplate(templateId) {
+        const res = await fetch(`/api/elab/template/${templateId}`);
+        const data = await res.json();
+        document.getElementById("templatePreview").innerHTML = data.body || "<em>No preview available</em>";
+    }
+
+    document.getElementById("templateSelector").addEventListener("change", e => {
+        previewTemplate(e.target.value);
+    });
+
+    document.getElementById("pushBtn").addEventListener("click", () => {
+        const templateId = document.getElementById("templateSelector").value;
+        document.getElementById("pushResult").textContent = "Posting…";
+        fetch(`/push/{{ file_id }}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `template_id=${templateId}`
+        })
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById("pushResult").textContent = JSON.stringify(data, null, 2);
+        })
+        .catch(err => {
+            document.getElementById("pushResult").textContent = "Error: " + err;
+        });
+    });
+
+    document.getElementById("fetchBtn").addEventListener("click", () => {
+        document.getElementById("fetchResult").textContent = "Loading…";
+        fetch('/api/elab/experiments')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById("fetchResult").textContent = JSON.stringify(data, null, 2);
+        })
+        .catch(err => {
+            document.getElementById("fetchResult").textContent = "Error: " + err;
+        });
+    });
 </script>
 </body>
 </html>
