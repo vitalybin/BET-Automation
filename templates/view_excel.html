@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>BET Excel → DB View</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    body { background:#f7f8fa }
+    .card { border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,.06) }
+  </style>
+</head>
+<body>
+<div class="container py-5">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+    <div>
+      <h1 class="mb-0">Excel BET Data (file {{ file_id }})</h1>
+      <p class="text-muted mb-0">Parsed from uploaded Excel and stored in database.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="/files" class="btn btn-outline-secondary">Back to list</a>
+      <a href="/" class="btn btn-outline-primary">Upload new</a>
+    </div>
+  </div>
+
+  <!-- ELN push card -->
+  <div class="card mb-4 p-3">
+    <h5 class="mb-2">Send this Excel-based result to ELN</h5>
+    <p class="text-muted mb-2">
+      Select an ELN <strong>template</strong> (loaded from your ELN). For now the template
+      does not change the generated content, but its ID is recorded and used in tags.
+    </p>
+    <form class="row g-2 align-items-end" onsubmit="return pushELN(event, {{ file_id }})">
+      <div class="col-sm-4 col-12">
+        <label class="form-label mb-1">Template (optional)</label>
+        <select name="template_id" class="form-select template-select">
+          <option value="">Loading templates…</option>
+        </select>
+      </div>
+      <div class="col-sm-4 col-12">
+        <label class="form-label mb-1">Title (optional)</label>
+        <input type="text"
+               name="title"
+               class="form-control"
+               placeholder="BET result for sample ..."
+               value="File {{ file_id }}">
+      </div>
+      <div class="col-sm-4 col-12">
+        <button type="submit" class="btn btn-success w-100">Send to ELN</button>
+      </div>
+    </form>
+    <div class="mt-2 small text-muted" id="eln-status-text"></div>
+  </div>
+
+  <!-- Metadata download -->
+  <div class="mb-4">
+    <a href="{{ metadata_url }}" class="btn btn-sm btn-outline-secondary">
+      Download metadata Excel
+    </a>
+  </div>
+
+  <!-- Data sections -->
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card p-3 mb-3">
+        <h5>File Info</h5>
+        {% if not info.empty %}
+          {{ info.to_html(classes="table table-sm table-striped")|safe }}
+        {% else %}
+          <p class="text-muted mb-0"><em>No file_info data.</em></p>
+        {% endif %}
+      </div>
+
+      <div class="card p-3 mb-3">
+        <h5>Technical Info</h5>
+        {% if not tech.empty %}
+          {{ tech.to_html(classes="table table-sm table-striped")|safe }}
+        {% else %}
+          <p class="text-muted mb-0"><em>No technical_info data.</em></p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card p-3 mb-3">
+        <h5>BET Parameters</h5>
+        {% if not bet.empty %}
+          {{ bet.to_html(classes="table table-sm table-striped")|safe }}
+        {% else %}
+          <p class="text-muted mb-0"><em>No bet_parameters data.</em></p>
+        {% endif %}
+      </div>
+
+      <div class="card p-3 mb-3">
+        <h5>BET Plot Columns</h5>
+        {% if not cols.empty %}
+          {{ cols.to_html(classes="table table-sm table-striped")|safe }}
+        {% else %}
+          <p class="text-muted mb-0"><em>No bet_plot_columns data.</em></p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-3 mt-3">
+    <h5>BET Data Points</h5>
+    {% if not pts.empty %}
+      {{ pts.to_html(classes="table table-sm table-striped")|safe }}
+    {% else %}
+      <p class="text-muted mb-0"><em>No bet_data_points rows.</em></p>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+let ELN_TEMPLATES = null;
+let ELN_TEMPLATES_ERROR = null;
+
+async function loadTemplatesOnce() {
+  if (ELN_TEMPLATES !== null || ELN_TEMPLATES_ERROR !== null) {
+    return;
+  }
+  try {
+    const r = await fetch('/api/elab/templates', { headers: { 'Accept': 'application/json' }});
+    if (!r.ok) {
+      ELN_TEMPLATES_ERROR = 'HTTP ' + r.status;
+      console.error('Template fetch error status', r.status);
+      return;
+    }
+    const data = await r.json();
+    if (!Array.isArray(data)) {
+      ELN_TEMPLATES_ERROR = 'Invalid JSON shape';
+      console.error('Template fetch invalid data', data);
+      return;
+    }
+    ELN_TEMPLATES = data;
+    console.log('Loaded ELN templates:', data);
+  } catch (e) {
+    ELN_TEMPLATES_ERROR = String(e);
+    console.error('Template fetch failed', e);
+  }
+}
+
+async function populateTemplateSelects() {
+  await loadTemplatesOnce();
+  const selects = document.querySelectorAll('select.template-select');
+  if (!selects.length) return;
+
+  if (ELN_TEMPLATES_ERROR) {
+    selects.forEach(sel => {
+      sel.innerHTML = '<option value="">Templates unavailable</option>';
+    });
+    return;
+  }
+
+  if (!ELN_TEMPLATES || !ELN_TEMPLATES.length) {
+    selects.forEach(sel => {
+      sel.innerHTML = '<option value="">No templates found</option>';
+    });
+    return;
+  }
+
+  selects.forEach(sel => {
+    const current = sel.value;
+    sel.innerHTML = '';
+    const optNone = document.createElement('option');
+    optNone.value = '';
+    optNone.textContent = 'No template';
+    sel.appendChild(optNone);
+
+    ELN_TEMPLATES.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = `${t.id} – ${t.title}`;
+      if (String(t.id) === String(current)) {
+        opt.selected = true;
+      }
+      sel.appendChild(opt);
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  populateTemplateSelects();
+});
+
+async function pushELN(ev, fileId) {
+  ev.preventDefault();
+  const form = ev.target;
+  const btn  = form.querySelector('button[type="submit"]');
+  const status = document.getElementById('eln-status-text');
+  const fd   = new FormData(form);
+  const origText = btn.textContent;
+
+  btn.disabled = true;
+  btn.textContent = 'Pushing…';
+  if (status) status.textContent = 'Pushing to ELN…';
+
+  try {
+    const r = await fetch(`/eln/${fileId}`, {
+      method: 'POST',
+      body: fd,
+      headers: { 'Accept': 'application/json' }
+    });
+
+    let data;
+    try {
+      data = await r.json();
+    } catch (e) {
+      if (status) status.textContent = 'ELN push failed: invalid JSON from server.';
+      alert('ELN push failed: invalid JSON from server');
+      return false;
+    }
+
+    if (!r.ok || !data.ok) {
+      const msg = (data && data.error) ? data.error : r.statusText;
+      if (status) status.textContent = 'ELN push failed: ' + msg;
+      alert('ELN push failed: ' + msg);
+    } else {
+      const msg = 'Experiment created (ID ' + data.exp_id +
+                  (data.template_id ? ', template ' + data.template_id : '') + ')';
+      if (status) status.textContent = msg;
+      alert('ELN created ✅  Experiment ID: ' + data.exp_id +
+            (data.template_id ? (' | Template: ' + data.template_id) : ''));
+    }
+  } catch (e) {
+    if (status) status.textContent = 'Network / JSON error: ' + e;
+    alert('Network/JSON error: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
+  }
+  return false;
+}
+</script>
+</body>
+</html>

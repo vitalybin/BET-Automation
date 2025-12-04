@@ -1,33 +1,195 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Uploaded Files</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <style>
-        body { padding: 2rem; background: #f1f3f5; }
-        .file-list {
-            max-width: 700px; margin: auto; background: white; padding: 2rem;
-            border-radius: 1rem; box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        }
-    </style>
+  <title>Uploaded BET Files</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    body { background:#f7f8fa }
+    .card { border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,.06) }
+    .file-badge { font-size:.8rem }
+    .table thead th { white-space: nowrap; }
+    .table td { vertical-align: middle; }
+    .btn-icon { display:inline-flex;align-items:center;gap:.35rem; }
+    .status-pill {
+      display:inline-flex;
+      align-items:center;
+      gap:.25rem;
+      font-size:.8rem;
+      border-radius:999px;
+      padding:.15rem .6rem;
+    }
+  </style>
 </head>
 <body>
-    <div class="file-list">
-        <h3 class="mb-4">Uploaded Files</h3>
-        <ul class="list-group">
-        {% for row in df.itertuples() %}
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                <div>
-                    <strong>{{ row.file_name }}</strong>
-                    <div class="text-muted" style="font-size: 0.9em;">
-                        Uploaded on {{ row.date_of_measurement }} at {{ row.time_of_measurement }}
-                    </div>
-                </div>
-                <a class="btn btn-sm btn-outline-primary" href="/file/{{ row.id }}">View</a>
-            </li>
-        {% endfor %}
-        </ul>
-        <a href="/" class="btn btn-secondary mt-4">← Upload Another File</a>
+<div class="container py-5">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <h1 class="mb-0">📚 Uploaded BET Files</h1>
+    <div class="d-flex gap-2">
+      <a class="btn btn-primary" href="/">Upload new</a>
+      <a class="btn btn-outline-secondary" href="/api">API</a>
     </div>
+  </div>
+  <p class="text-muted mb-4">
+    Excel and PDF uploads. The <strong>View</strong> button always opens the correct page:
+    Excel → Excel view, PDF → PDF view.<br>
+    You can optionally type a <strong>Template ID</strong> (just stored with the push;
+    content is still generated locally).
+  </p>
+
+  <div class="card p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:60px">ID</th>
+            <th>File</th>
+            <th style="width:90px">Type</th>
+            <th style="width:140px">Date</th>
+            <th style="width:100px">Time</th>
+            <th style="width:320px">Actions</th>
+            <th style="width:200px">ELN Status</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for it in items %}
+          <tr id="row-{{ it.id }}">
+            <td class="text-muted">{{ it.id }}</td>
+            <td>
+              <div class="fw-semibold">{{ it.file_name }}</div>
+              <div class="small text-muted">#{{ it.id }}</div>
+            </td>
+            <td>
+              {% if it.type == 'PDF' %}
+                <span class="badge bg-warning text-dark file-badge">PDF</span>
+              {% else %}
+                <span class="badge bg-info text-dark file-badge">Excel</span>
+              {% endif %}
+            </td>
+            <td>{{ it.date or '—' }}</td>
+            <td>{{ it.time or '—' }}</td>
+            <td>
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <!-- View -->
+                <a class="btn btn-sm btn-outline-primary btn-icon" href="{{ it.view_url }}">View</a>
+
+                <!-- Metadata -->
+                <a class="btn btn-sm btn-outline-secondary btn-icon" href="{{ it.metadata_url }}">Metadata</a>
+
+                <!-- ELN push with optional template_id -->
+                <form onsubmit="return pushELN(event, {{ it.id }})" class="d-flex flex-wrap gap-1 align-items-center">
+                  <input type="number"
+                         name="template_id"
+                         class="form-control form-control-sm"
+                         style="max-width:90px"
+                         placeholder="Template"
+                         title="Optional ELN template ID (not used in content yet)">
+                  <input type="hidden" name="title" value="File {{ it.id }}">
+                  <button class="btn btn-sm btn-success btn-icon" type="submit">
+                    <span>Send to ELN</span>
+                  </button>
+                </form>
+              </div>
+            </td>
+            <td>
+              <span id="eln-status-{{ it.id }}" class="status-pill bg-light text-muted">
+                <span>●</span><span>Not pushed</span>
+              </span>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="text-center py-4 text-muted">
+              <em>No files yet. Upload one to get started.</em>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="p-3 d-flex justify-content-between flex-wrap gap-2">
+      <div class="small text-muted">{{ items|length }} total</div>
+      <div class="text-muted small">Showing latest first</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function setStatus(fileId, state, message) {
+  const el = document.getElementById('eln-status-' + fileId);
+  if (!el) return;
+  const dotSpan  = el.querySelector('span:first-child');
+  const textSpan = el.querySelector('span:last-child');
+
+  el.classList.remove('bg-light','text-muted','bg-warning','text-dark',
+                      'bg-success','text-white','bg-danger');
+
+  if (state === 'idle') {
+    el.classList.add('bg-light','text-muted');
+    dotSpan.textContent = '●';
+    textSpan.textContent = message || 'Not pushed';
+  } else if (state === 'pushing') {
+    el.classList.add('bg-warning','text-dark');
+    dotSpan.textContent = '●';
+    textSpan.textContent = message || 'Pushing…';
+  } else if (state === 'ok') {
+    el.classList.add('bg-success','text-white');
+    dotSpan.textContent = '✔';
+    textSpan.textContent = message || 'Pushed OK';
+  } else if (state === 'error') {
+    el.classList.add('bg-danger','text-white');
+    dotSpan.textContent = '✖';
+    textSpan.textContent = message || 'Failed';
+  }
+}
+
+async function pushELN(ev, fileId) {
+  ev.preventDefault();
+  const form = ev.target;
+  const btn  = form.querySelector('button[type="submit"]');
+  const fd   = new FormData(form);
+  const origHtml = btn.innerHTML;
+
+  btn.disabled = true;
+  btn.innerHTML = 'Pushing…';
+  setStatus(fileId, 'pushing', 'Pushing to ELN…');
+
+  try {
+    const r = await fetch(`/eln/${fileId}`, {
+      method: 'POST',
+      body: fd,
+      headers: { 'Accept': 'application/json' }
+    });
+
+    let data;
+    try {
+      data = await r.json();
+    } catch (e) {
+      setStatus(fileId, 'error', 'Invalid JSON from server');
+      alert('ELN push failed: invalid JSON from server');
+      return false;
+    }
+
+    if (!r.ok || !data.ok) {
+      const msg = (data && data.error) ? data.error : r.statusText;
+      setStatus(fileId, 'error', msg);
+      alert('ELN push failed: ' + msg);
+    } else {
+      const msg = 'OK (ID ' + data.exp_id + ')';
+      setStatus(fileId, 'ok', msg);
+      alert('ELN created ✅  Experiment ID: ' + data.exp_id);
+    }
+  } catch (e) {
+    console.error('pushELN error', e);
+    setStatus(fileId, 'error', 'Network/JSON error');
+    alert('Network/JSON error: ' + e);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+  }
+  return false;
+}
+</script>
 </body>
 </html>

@@ -1,0 +1,90 @@
+{
+  "general": {
+    "Operators": [
+      "thomas",
+      "Nova3200e"
+    ],
+    "OperatorPrimary": "thomas",
+    "Dates": [
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17",
+      "2025/07/02",
+      "2025/07/17"
+    ],
+    "Sample ID": "1219",
+    "Filename": "528_FZM_0029.qps",
+    "Sample Description": "Comment:",
+    "Comment": "Sample weight:",
+    "Sample weight": "0.0212 g",
+    "Sample Volume": "1 cc",
+    "Outgas Time": "1.0 hrs",
+    "OutgasTemp": "350.0 C",
+    "Analysis gas": "Nitrogen",
+    "Bath Temp": "273.0 K",
+    "Press. Tolerance": "0.100/0.050 (ads/des)",
+    "Equil time": "180/180 sec (ads/des)",
+    "Equil timeout": "1200/480 sec (ads/des)",
+    "Analysis Time": "541.5 min",
+    "End of run": "2025/07/02 19:06:19",
+    "Instrument": "Nova Station A",
+    "Cell ID": "0"
+  },
+  "isotherm_summary": {
+    "Isotherm Slope": "3.918",
+    "Isotherm Intercept": "4.398e-02",
+    "Isotherm r": "0.999991",
+    "C constant": "90.074",
+    "Surface Area": "879.028 m\u00b2/g"
+  },
+  "multipoint_bet_summary": {
+    "Thickness method": "DeBoer",
+    "Multi-Point BET Slope": "122.528",
+    "Multi-Point BET Intercept": "-316.184",
+    "Multi-Point BET r": "0.982410",
+    "Micropore volume": "0.000 cc/g",
+    "Micropore area": "0.000 m\u00b2/g",
+    "External surface area": "879.028 m\u00b2/g"
+  },
+  "tplot_summary": {
+    "t-Plot Surface Area": "109.932 m\u00b2/g",
+    "Pore Volume": "0.889 cc/g",
+    "Pore Diameter Dv(d)": "5.997 nm"
+  },
+  "csvs": {
+    "isotherm": "uploads/pdf_out/isotherm_points.csv",
+    "tplot": "uploads/pdf_out/tplot_points.csv",
+    "bjh": "uploads/pdf_out/bjh_desorption.csv"
+  },
+  "plots": [
+    "uploads/pdf_out/isotherm.png",
+    "uploads/pdf_out/tplot.png",
+    "uploads/pdf_out/bjh_distribution.png"
+  ],
+  "docx": "Skipped"
+}

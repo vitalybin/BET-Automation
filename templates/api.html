@@ -1,30 +1,24 @@
 <!DOCTYPE html>
 <html>
-<head><title>API Documentation</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-<style>body{padding:2rem;background:#f8f9fa}.card{padding:1.5rem;margin-bottom:1rem;border-radius:0.5rem;}</style>
+<head>
+  <title>Puralox BET API</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head>
-<body>
-<div class="container">
-<h1 class="mb-4">🔌 Puralox eLabFTW Integration API</h1>
-<div class="card bg-white shadow-sm">
-  <h4>File Management</h4>
+<body class="bg-light">
+<div class="container py-5">
+  <h1 class="mb-3">🔌 Puralox BET API</h1>
+  <p class="text-muted">
+    Minimal API overview.
+  </p>
   <ul>
-    <li><code>GET /</code> — upload page</li>
-    <li><code>GET /files</code> — list uploaded files</li>
-    <li><code>GET /file/&lt;id&gt;</code> — view file data</li>
-    <li><code>GET /api/data/&lt;id&gt;</code> — raw JSON of processed data</li>
+    <li><code>GET /files</code> – HTML list of uploaded files.</li>
+    <li><code>GET /api/elab/experiments</code> – JSON of latest ELN experiments (if reachable).</li>
+    <li><code>POST /eln/&lt;file_id&gt;</code> – Push a given file's BET data to ELN (JSON response).</li>
+    <li><code>GET /metadata/file/&lt;file_id&gt;</code> – Download metadata Excel for a file.</li>
   </ul>
-</div>
-<div class="card bg-white shadow-sm">
-  <h4>eLabFTW Endpoints</h4>
-  <ul>
-    <li><code>GET /ping</code> — network ping test</li>
-    <li><code>GET /api/elab/experiments</code> — list experiments</li>
-    <li><code>POST /api/elab/demo</code> — create demo experiment</li>
-    <li><code>POST /push/&lt;file_id&gt;</code> — push a processed file as an experiment</li>
-  </ul>
-</div>
+  <a href="/" class="btn btn-primary mt-3">Back to upload</a>
 </div>
 </body>
 </html>
