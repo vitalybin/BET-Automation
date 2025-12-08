@@ -20,6 +20,12 @@
       border-radius:999px;
       padding:.15rem .6rem;
     }
+    /* small, subtle panel under the actions row */
+    .template-panel {
+      border-top: 1px dashed rgba(0,0,0,.12);
+      margin-top: .25rem;
+      padding-top: .25rem;
+    }
   </style>
 </head>
 <body>
@@ -34,8 +40,8 @@
   <p class="text-muted mb-4">
     Excel and PDF uploads. The <strong>View</strong> button always opens the correct page:
     Excel → Excel view, PDF → PDF view.<br>
-    You can optionally type a <strong>Template ID</strong> (just stored with the push;
-    content is still generated locally).
+    You can optionally choose an ELN <strong>Template</strong> and title before clicking
+    <strong>Send to ELN</strong>.
   </p>
 
   <div class="card p-0">
@@ -70,26 +76,61 @@
             <td>{{ it.date or '—' }}</td>
             <td>{{ it.time or '—' }}</td>
             <td>
-              <div class="d-flex flex-wrap gap-2 align-items-center">
-                <!-- View -->
-                <a class="btn btn-sm btn-outline-primary btn-icon" href="{{ it.view_url }}">View</a>
+              <div class="d-flex flex-column gap-1">
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                  <!-- View -->
+                  <a class="btn btn-sm btn-outline-primary btn-icon" href="{{ it.view_url }}">View</a>
 
-                <!-- Metadata -->
-                <a class="btn btn-sm btn-outline-secondary btn-icon" href="{{ it.metadata_url }}">Metadata</a>
+                  <!-- Metadata -->
+                  <a class="btn btn-sm btn-outline-secondary btn-icon" href="{{ it.metadata_url }}">Metadata</a>
 
-                <!-- ELN push with optional template_id -->
-                <form onsubmit="return pushELN(event, {{ it.id }})" class="d-flex flex-wrap gap-1 align-items-center">
-                  <input type="number"
-                         name="template_id"
-                         class="form-control form-control-sm"
-                         style="max-width:90px"
-                         placeholder="Template"
-                         title="Optional ELN template ID (not used in content yet)">
-                  <input type="hidden" name="title" value="File {{ it.id }}">
-                  <button class="btn btn-sm btn-success btn-icon" type="submit">
-                    <span>Send to ELN</span>
-                  </button>
-                </form>
+                  <!-- ELN push form (template + title + send) -->
+                  <form
+                    onsubmit="return pushELN(event, {{ it.id }})"
+                    class="d-flex flex-wrap gap-1 align-items-center eln-form">
+
+                    <!-- Toggle template panel -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-dark btn-icon template-toggle"
+                      title="Show available ELN templates">
+                      <span>Template</span>
+                    </button>
+
+                    <!-- Send to ELN -->
+                    <button class="btn btn-sm btn-success btn-icon" type="submit">
+                      <span>Send to ELN</span>
+                    </button>
+
+                    <!-- Panel that opens when 'Template' is clicked -->
+                    <div class="w-100 template-panel d-none">
+                      <div class="d-flex flex-wrap gap-2 align-items-center mt-1">
+                        <div class="d-flex flex-column">
+                          <label class="small mb-0 text-muted">Template</label>
+                          <select
+                            name="template_id"
+                            class="form-select form-select-sm template-select"
+                            style="min-width: 140px; max-width: 180px;"
+                            title="Select an ELN template">
+                            <option value="">No template (default)</option>
+                            <!-- JS will populate options -->
+                          </select>
+                        </div>
+
+                        <div class="d-flex flex-column">
+                          <label class="small mb-0 text-muted">Title</label>
+                          <input
+                            type="text"
+                            name="title"
+                            class="form-control form-control-sm"
+                            style="min-width: 160px; max-width: 260px;"
+                            value="File {{ it.id }}"
+                            title="Experiment title in ELN">
+                        </div>
+                      </div>
+                    </div>
+                  </form>
+                </div>
               </div>
             </td>
             <td>
@@ -116,11 +157,13 @@
 </div>
 
 <script>
+/* ---------- ELN status pill helpers ---------- */
 function setStatus(fileId, state, message) {
   const el = document.getElementById('eln-status-' + fileId);
   if (!el) return;
-  const dotSpan  = el.querySelector('span:first-child');
-  const textSpan = el.querySelector('span:last-child');
+  const spans = el.querySelectorAll('span');
+  const dotSpan  = spans[0];
+  const textSpan = spans[1];
 
   el.classList.remove('bg-light','text-muted','bg-warning','text-dark',
                       'bg-success','text-white','bg-danger');
@@ -144,6 +187,62 @@ function setStatus(fileId, state, message) {
   }
 }
 
+/* ---------- Template loading and panel toggle ---------- */
+document.addEventListener('DOMContentLoaded', function () {
+  let templatesCache = null;
+  let templatesLoaded = false;
+
+  async function fetchTemplates() {
+    if (templatesCache) return templatesCache;
+    try {
+      const resp = await fetch('/api/elab/templates');
+      if (!resp.ok) {
+        console.error('Failed to load templates', resp.status);
+        return [];
+      }
+      templatesCache = await resp.json();
+      return templatesCache;
+    } catch (err) {
+      console.error('Template fetch error', err);
+      return [];
+    }
+  }
+
+  async function ensureTemplatesLoaded() {
+    if (templatesLoaded) return;
+    const templates = await fetchTemplates();
+    const selects = document.querySelectorAll('.template-select');
+
+    selects.forEach(select => {
+      // keep first "No template" option, clear others
+      while (select.options.length > 1) {
+        select.remove(1);
+      }
+      templates.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.title || ('Template ' + t.id);
+        select.appendChild(opt);
+      });
+    });
+
+    templatesLoaded = true;
+  }
+
+  document.querySelectorAll('.template-toggle').forEach(btn => {
+    btn.addEventListener('click', async function () {
+      const form = btn.closest('form');
+      const panel = form.querySelector('.template-panel');
+      if (!panel) return;
+
+      await ensureTemplatesLoaded();
+
+      panel.classList.toggle('d-none');
+    });
+  });
+});
+
+/* ---------- ELN push (existing flow, now with template_id + title) ---------- */
 async function pushELN(ev, fileId) {
   ev.preventDefault();
   const form = ev.target;
