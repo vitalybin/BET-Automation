@@ -1,4 +1,8 @@
 import sqlite3
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class DatabaseManager:
 
@@ -18,40 +22,64 @@ class DatabaseManager:
         return conn
 
     # -----------------------------
-    # FIXED: Now supports parameters
+    # Fetch all rows as dicts
     # -----------------------------
     def fetchall_dict(self, sql, params=None):
         conn = self.connect()
-        cur = conn.cursor()
-        if params:
-            cur.execute(sql, params)
-        else:
-            cur.execute(sql)
-        rows = cur.fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
+        try:
+            cur = conn.cursor()
+            if params:
+                cur.execute(sql, params)
+            else:
+                cur.execute(sql)
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.OperationalError as e:
+            logger.exception("SQLite OperationalError in fetchall_dict: %s", e)
+            raise
+        except Exception as e:
+            logger.exception("Database error in fetchall_dict: %s", e)
+            raise
+        finally:
+            conn.close()
 
-    # Same fix for fetchone if needed later
+    # Single row
     def fetchone_dict(self, sql, params=None):
         conn = self.connect()
-        cur = conn.cursor()
-        if params:
-            cur.execute(sql, params)
-        else:
-            cur.execute(sql)
-        row = cur.fetchone()
-        conn.close()
-        return dict(row) if row else None
+        try:
+            cur = conn.cursor()
+            if params:
+                cur.execute(sql, params)
+            else:
+                cur.execute(sql)
+            row = cur.fetchone()
+            return dict(row) if row else None
+        except sqlite3.OperationalError as e:
+            logger.exception("SQLite OperationalError in fetchone_dict: %s", e)
+            raise
+        except Exception as e:
+            logger.exception("Database error in fetchone_dict: %s", e)
+            raise
+        finally:
+            conn.close()
 
     # Insert/update/delete
     def execute(self, sql, params=None):
         conn = self.connect()
-        cur = conn.cursor()
-        if params:
-            cur.execute(sql, params)
-        else:
-            cur.execute(sql)
-        conn.commit()
-        last_id = cur.lastrowid
-        conn.close()
-        return last_id
+        try:
+            cur = conn.cursor()
+            if params:
+                cur.execute(sql, params)
+            else:
+                cur.execute(sql)
+            conn.commit()
+            last_id = cur.lastrowid
+            return last_id
+        except sqlite3.OperationalError as e:
+            logger.exception("SQLite OperationalError in execute: %s", e)
+            raise
+        except Exception as e:
+            logger.exception("Database error in execute: %s", e)
+            raise
+        finally:
+            conn.close()

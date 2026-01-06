@@ -1,24 +1,34 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Puralox BET API</title>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <meta charset="UTF-8">
+  <title>Puralox API Info</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <style>
+    body { background:#f7f8fa; }
+    .card { border-radius:14px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+  </style>
 </head>
-<body class="bg-light">
+<body>
 <div class="container py-5">
-  <h1 class="mb-3">🔌 Puralox BET API</h1>
-  <p class="text-muted">
-    Minimal API overview.
-  </p>
-  <ul>
-    <li><code>GET /files</code> – HTML list of uploaded files.</li>
-    <li><code>GET /api/elab/experiments</code> – JSON of latest ELN experiments (if reachable).</li>
-    <li><code>POST /eln/&lt;file_id&gt;</code> – Push a given file's BET data to ELN (JSON response).</li>
-    <li><code>GET /metadata/file/&lt;file_id&gt;</code> – Download metadata Excel for a file.</li>
-  </ul>
-  <a href="/" class="btn btn-primary mt-3">Back to upload</a>
+  <div class="card">
+    <div class="card-body">
+      <h1 class="h4 mb-3">Puralox Internal API</h1>
+      <p class="text-muted mb-4">
+        This page is just a placeholder. The application exposes internal endpoints for
+        ELN integration (eLabFTW) and file metadata export.
+      </p>
+      <ul>
+        <li><code>GET /files</code> – list uploaded files</li>
+        <li><code>POST /eln/&lt;file_id&gt;</code> – push to eLabFTW</li>
+        <li><code>GET /metadata/file/&lt;file_id&gt;</code> – download metadata Excel</li>
+        <li><code>GET /api/elab/templates</code> – list ELN templates (JSON)</li>
+      </ul>
+      <a href="/files" class="btn btn-primary mt-2">Back to files</a>
+    </div>
+  </div>
 </div>
 </body>
 </html>

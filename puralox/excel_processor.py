@@ -1,4 +1,6 @@
 import pandas as pd
+from .nomenclature import build_measurement_id
+
 
 class ExcelProcessor:
     def __init__(self, db_manager):
@@ -8,14 +10,14 @@ class ExcelProcessor:
     def to_float(val):
         try:
             return float(val)
-        except:
+        except Exception:
             return None
 
     @staticmethod
     def to_int(val):
         try:
             return int(float(val))
-        except:
+        except Exception:
             return None
 
     def process_file(self, filepath):
@@ -31,8 +33,9 @@ class ExcelProcessor:
             'comment3': str(df.iloc[6, 2]),
             'comment4': str(df.iloc[7, 2]),
             'serial_number': str(df.iloc[8, 2]),
-            'version': str(df.iloc[9, 2])
+            'version': str(df.iloc[9, 2]),
         }
+
         # insert into file_info and capture its new id
         fid = self.db.execute(
             '''INSERT INTO file_info 
@@ -43,6 +46,24 @@ class ExcelProcessor:
                        :comment1, :comment2, :comment3, :comment4,
                        :serial_number, :version)''',
             file_info
+        )
+
+        # --- NEW: auto-generate Measurement ID and store in comment5 ---
+        measurement_id = build_measurement_id(
+            file_id=fid,
+            file_name=file_info['file_name'],
+            date_of_measurement=file_info['date_of_measurement'],
+            time_of_measurement=file_info['time_of_measurement'],
+            operator=file_info['comment2'],
+            instrument=file_info['comment4'],
+            serial_number=file_info['serial_number'],
+            comment1=file_info['comment1'],
+            comment3=file_info['comment3'],
+        )
+        # requires comment5 column to exist on file_info
+        self.db.execute(
+            "UPDATE file_info SET comment5=? WHERE id=?",
+            (measurement_id, fid)
         )
 
         # --- BET Parameters ---
@@ -64,7 +85,7 @@ class ExcelProcessor:
             'as_bet':                  self.to_float(df.iloc[25, 3]),
             'c_value':                 self.to_float(df.iloc[26, 3]),
             'total_pore_volume':       self.to_float(df.iloc[27, 3]),
-            'average_pore_diameter':   self.to_float(df.iloc[28, 3])
+            'average_pore_diameter':   self.to_float(df.iloc[28, 3]),
         }
         cols = ', '.join(params.keys())
         placeholders = ', '.join(':'+k for k in params)
@@ -81,7 +102,7 @@ class ExcelProcessor:
             'wall_adsorption_correction1': str(df.iloc[13, 4]),
             'wall_adsorption_correction2': str(df.iloc[14, 4]),
             'num_adsorption_points':       self.to_int(df.iloc[15, 4]),
-            'num_desorption_points':       self.to_int(df.iloc[16, 4])
+            'num_desorption_points':       self.to_int(df.iloc[16, 4]),
         }
         tcols = ', '.join(tech.keys())
         tph   = ', '.join(':'+k for k in tech)
@@ -111,5 +132,5 @@ class ExcelProcessor:
                     (fid, no, p_p0, p_va)
                 )
 
-        # ─── return the new file_info ID ────────────────────────────────────
+        # Return the new file_info ID
         return fid

@@ -6,12 +6,13 @@ import re
 import time
 import logging
 import warnings
+import sqlite3
+from io import BytesIO
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from io import BytesIO
 from flask import (
     Flask, request, redirect, url_for,
     render_template, jsonify, send_from_directory
@@ -29,11 +30,12 @@ from .config import UPLOAD_FOLDER, DB_NAME
 from .db_manager import DatabaseManager
 from .excel_processor import ExcelProcessor
 from .bet_integration import extract_all_with_prints
+from .nomenclature import build_measurement_id
 import requests
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
 load_dotenv()
-ELABFTW_URL   = "https://localhost/api/v2"
+ELABFTW_URL   = os.getenv("ELABFTW_URL", "https://localhost/api/v2")
 ELABFTW_TOKEN = os.getenv(
     "ELABFTW_TOKEN",
     "15-c80599971b8e2592a5fadaa45f143f8201828540bbb3b0cf3731316c65c885c50e30bb08ff94069b006115"
@@ -111,12 +113,50 @@ class PuraloxApp:
             )
         """)
 
+        # --- ensure comment5 exists on file_info (for Measurement ID) ---
+        try:
+            cols = self.db.fetchall_dict("PRAGMA table_info(file_info)")
+            colnames = {c["name"] for c in cols}
+            if "comment5" not in colnames:
+                logging.info("Adding comment5 column to file_info")
+                self.db.execute("ALTER TABLE file_info ADD COLUMN comment5 TEXT")
+        except Exception:
+            logging.exception("Failed to ensure comment5 column on file_info")
+
     def _table_exists(self, name: str) -> bool:
         rows = self.db.fetchall_dict(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (name,)
         )
         return bool(rows)
+
+    # helper to set Measurement ID for Excel uploads
+    def _set_measurement_id_for_file(self, file_id: int) -> None:
+        try:
+            rows = self.db.fetchall_dict(
+                "SELECT * FROM file_info WHERE id=?",
+                (file_id,)
+            )
+            if not rows:
+                return
+            fi = rows[0]
+            measurement_id = build_measurement_id(
+                file_id=file_id,
+                file_name=fi.get("file_name", ""),
+                date_of_measurement=fi.get("date_of_measurement", ""),
+                time_of_measurement=fi.get("time_of_measurement", ""),
+                operator=fi.get("comment2", ""),
+                instrument=fi.get("comment4", ""),
+                serial_number=fi.get("serial_number", ""),
+                comment1=fi.get("comment1", ""),
+                comment3=fi.get("comment3", ""),
+            )
+            self.db.execute(
+                "UPDATE file_info SET comment5=? WHERE id=?",
+                (measurement_id, file_id)
+            )
+        except Exception as e:
+            logging.warning("Failed to set measurement_id for file_id=%s: %s", file_id, e)
 
     # ─── ELN template helper ───────────────────────────────────────────
     def _get_templates(self):
@@ -152,7 +192,8 @@ class PuraloxApp:
     def _configure_elabftw(self):
         cfg = elabapi_python.Configuration()
         cfg.host       = ELABFTW_URL
-        cfg.verify_ssl = False
+        disable_ssl = os.getenv("ELABFTW_DISABLE_SSL", "true").lower() == "true"
+        cfg.verify_ssl = not disable_ssl
         client = elabapi_python.ApiClient(cfg)
         client.set_default_header("Authorization", ELABFTW_TOKEN)
 
@@ -190,13 +231,20 @@ class PuraloxApp:
                     if ext in (".xlsx", ".xls"):
                         # Existing Excel import flow
                         new_file_id = self.processor.process_file(dst)
+                        # set Measurement ID for Excel
+                        self._set_measurement_id_for_file(new_file_id)
 
                     elif ext == ".pdf":
                         # PDF → parse → DB
                         out_dir = os.path.join(self.app.config["UPLOAD_FOLDER"], "pdf_out")
                         os.makedirs(out_dir, exist_ok=True)
                         bundle = extract_all_with_prints(dst, out_dir)
-                        new_file_id = self._insert_pdf_bundle_into_db(bundle)
+
+                        # Pass uploaded filename so type detection works
+                        new_file_id = self._insert_pdf_bundle_into_db(
+                            bundle,
+                            original_filename=f.filename
+                        )
 
                     else:
                         return "Unsupported file type. Upload .xlsx or .pdf", 400
@@ -220,7 +268,7 @@ class PuraloxApp:
         @self.app.route("/files")
         def list_files():
             rows = self.db.fetchall_dict(
-                "SELECT id, file_name, date_of_measurement, time_of_measurement "
+                "SELECT id, file_name, date_of_measurement, time_of_measurement, comment5 "
                 "FROM file_info ORDER BY id DESC"
             )
             items = []
@@ -236,6 +284,7 @@ class PuraloxApp:
                 items.append({
                     "id": r["id"],
                     "file_name": fname,
+                    "measurement_id": r.get("comment5") or "",
                     "date": r.get("date_of_measurement", ""),
                     "time": r.get("time_of_measurement", ""),
                     "type": ftype,
@@ -258,6 +307,13 @@ class PuraloxApp:
             tech = to_df(f"SELECT * FROM technical_info WHERE file_info_id={file_id}")
             cols = to_df(f"SELECT * FROM bet_plot_columns WHERE file_info_id={file_id}")
             pts  = to_df(f"SELECT * FROM bet_data_points WHERE file_info_id={file_id}")
+
+            # For interactive plot in template
+            pts_data = []
+            if pts is not None and not pts.empty:
+                pts_sorted = pts.sort_values("no")
+                pts_data = pts_sorted[["no", "p_p0", "p_va_p0_p"]].to_dict(orient="records")
+
             md_url = url_for("download_metadata_for_file", file_id=file_id)
             return render_template(
                 "view_excel.html",
@@ -267,17 +323,21 @@ class PuraloxApp:
                 tech=tech,
                 cols=cols,
                 pts=pts,
+                pts_data=pts_data,
                 metadata_url=md_url
             )
 
         # ── PDF detail view (summary) ─────────────────────────────────
         @self.app.route("/view/pdf/<int:file_id>")
         def view_pdf(file_id: int):
-            rows = self.db.fetchall_dict(
-                "SELECT file_name FROM file_info WHERE id=?",
+            # full file_info so template can show Sample date, conditions, etc.
+            fi_rows = self.db.fetchall_dict(
+                "SELECT * FROM file_info WHERE id=?",
                 (file_id,)
             )
-            pdf_filename = rows[0]["file_name"] if rows else f"file_{file_id}.pdf"
+            fi = fi_rows[0] if fi_rows else {}
+
+            pdf_filename = fi.get("file_name") or f"file_{file_id}.pdf"
 
             cnt_rows = self.db.fetchall_dict(
                 "SELECT COUNT(*) AS c FROM bet_data_points WHERE file_info_id=?",
@@ -285,13 +345,29 @@ class PuraloxApp:
             )
             points_count = cnt_rows[0]["c"] if cnt_rows else 0
 
+            # Only show BET / t-plot summaries (hide noisy general:* like general:Dates)
             summaries = []
             if self._table_exists("bet_summaries"):
                 kv_rows = self.db.fetchall_dict(
                     "SELECT key, value FROM bet_summaries WHERE file_info_id=? ORDER BY key",
                     (file_id,)
                 )
-                summaries = [{"key": r["key"], "value": r["value"]} for r in kv_rows]
+                for r in kv_rows:
+                    key = r["key"]
+                    if not (
+                        key.startswith("isotherm_summary")
+                        or key.startswith("multipoint_bet_summary")
+                        or key.startswith("tplot_summary")
+                    ):
+                        continue
+                    summaries.append({"key": key, "value": r["value"]})
+
+            # Load points for interactive plot
+            pts_rows = self.db.fetchall_dict(
+                "SELECT no, p_p0, p_va_p0_p FROM bet_data_points WHERE file_info_id=? ORDER BY no",
+                (file_id,)
+            )
+            pts_data = pts_rows  # list[dict]
 
             bundle = {
                 "file_id": file_id,
@@ -303,6 +379,8 @@ class PuraloxApp:
                 "view_pdf_extract.html",
                 pdf_filename=pdf_filename,
                 bundle=bundle,
+                file_info=fi,
+                pts_data=pts_data,
                 metadata_url=md_url
             )
 
@@ -355,18 +433,6 @@ class PuraloxApp:
 
     # ─── ELN push core (build HTML directly from DB, JSON only) ──────
     def _eln_create_local_json(self, file_id: int, template_id: int | None = None):
-        """
-        Creates an ELN experiment for given file_id.
-
-        Accepts an optional template_id (from URL or form), but currently
-        does NOT change the generated content. It's just logged so we can
-        use it later.
-
-        Always returns JSON:
-          { "ok": True, "exp_id": "...", "experiment_url": "..." }
-          or
-          { "ok": False, "error": "...", "stage": "..." }
-        """
         try:
             # ---- template_id (optional, informational) ----
             form_tid = request.form.get("template_id")
@@ -374,7 +440,6 @@ class PuraloxApp:
                 try:
                     template_id = int(form_tid)
                 except ValueError:
-                    # ignore bad input, keep existing template_id
                     pass
 
             logging.info(
@@ -454,9 +519,9 @@ class PuraloxApp:
 
             # ---- Final HTML body for ELN ----
             html_body = f"""
-            <h1>Experiment: {measurement_id}</h1>
+            <h1>BET Measurement Report</h1>
 
-            <h2>🧪 Experiment Meta Data</h2>
+            <h2>Meta Data</h2>
             <ul>
               <li><strong>Measurement ID:</strong> {measurement_id}</li>
               <li><strong>Date:</strong> {fi.get('date_of_measurement','')} {fi.get('time_of_measurement','')}</li>
@@ -467,29 +532,29 @@ class PuraloxApp:
               <li><strong>Version:</strong> {fi.get('version','')}</li>
               <li><strong>Scientist (Sample Preparation):</strong> {scientist}</li>
               <li><strong>Sample ID:</strong> {sample_id}</li>
-              <li><strong>Pretreatment conditions:</strong> {comment3}</li>
+              <li><strong>Measurement Conditions:</strong> {comment3}</li>
             </ul>
 
-            <h2>🧬 Experimental Procedure</h2>
+            <h2>Experimental Procedure</h2>
             <p>
               {mass} g of the sample <strong>{scientist}_{sample_id}</strong>
-              were pretreated at <strong>{temp}</strong> for <strong>{duration}</strong>
-              in <strong>{env}</strong>.<br>
+              were pretreated under the following conditions:
+              <strong>{comment3}</strong>.<br>
               For the evaluation of the BET isotherm, <strong>{len(pts)}</strong> points
               in a pressure range of <strong>{pmin}</strong> to <strong>{pmax}</strong> were considered.
             </p>
 
-            <h2>📊 Results</h2>
+            <h2>Results</h2>
             <p>
               The sample exhibited a specific surface area of
               <strong>{specific_surf_area}</strong> and a pore volume of
               <strong>{pore_volume}</strong>.
             </p>
 
-            <h3>📌 BET Parameters</h3>
+            <h3>BET Parameters</h3>
             {bet_table_html}
 
-            <h3>📈 BET Data Points (First 15)</h3>
+            <h3>BET Data Points (First 15)</h3>
             {pts_table_html}
             """
 
@@ -685,13 +750,17 @@ class PuraloxApp:
         return md_file
 
     # ─── PDF bundle → DB ──────────────────────────────────────────────
-    def _insert_pdf_bundle_into_db(self, bundle: dict) -> int:
+    def _insert_pdf_bundle_into_db(self, bundle: dict, original_filename: str | None = None) -> int:
         gen = (bundle.get("general") or {})
         iso = (bundle.get("isotherm_summary") or {})
         mp  = (bundle.get("multipoint_bet_summary") or {})
         tp  = (bundle.get("tplot_summary") or {})
 
-        file_name = gen.get("Filename") or gen.get("Sample ID") or "BET_PDF_Report.pdf"
+        # Instrument's own measurement file (often .qps)
+        measurement_filename = gen.get("Filename") or gen.get("Sample ID") or ""
+
+        # For type detection we want the uploaded PDF name here
+        file_name = original_filename or measurement_filename or "BET_PDF_Report.pdf"
 
         date_str, time_str = "", ""
         if isinstance(gen.get("Dates"), list) and gen["Dates"]:
@@ -706,13 +775,23 @@ class PuraloxApp:
         operator_primary = gen.get("OperatorPrimary") or \
             (gen.get("Operators")[0] if isinstance(gen.get("Operators"), list) and gen["Operators"] else "")
 
+        # pretreatment / measurement conditions from PDF fields
+        parts = []
+        if gen.get("OutgasTemp"):
+            parts.append(str(gen["OutgasTemp"]))
+        if gen.get("Outgas Time"):
+            parts.append(str(gen["Outgas Time"]))
+        if gen.get("Analysis gas"):
+            parts.append(str(gen["Analysis gas"]))
+        pretreat_str = ", ".join(parts)
+
         file_info = {
             "file_name": file_name,
             "date_of_measurement": date_str,
             "time_of_measurement": time_str,
-            "comment1": gen.get("Comment", ""),
+            "comment1": measurement_filename or gen.get("Comment", ""),
             "comment2": operator_primary,
-            "comment3": "",
+            "comment3": pretreat_str,
             "comment4": gen.get("Instrument", ""),
             "serial_number": "",
             "version": ""
@@ -726,6 +805,23 @@ class PuraloxApp:
                     :comment1, :comment2, :comment3, :comment4, :serial_number, :version)
             """,
             file_info
+        )
+
+        # Measurement ID for PDFs too
+        measurement_id = build_measurement_id(
+            file_id=fid,
+            file_name=file_info["file_name"],
+            date_of_measurement=file_info["date_of_measurement"],
+            time_of_measurement=file_info["time_of_measurement"],
+            operator=file_info["comment2"],
+            instrument=file_info["comment4"],
+            serial_number=file_info["serial_number"],
+            comment1=file_info["comment1"],
+            comment3=file_info["comment3"],
+        )
+        self.db.execute(
+            "UPDATE file_info SET comment5=? WHERE id=?",
+            (measurement_id, fid)
         )
 
         def _num(s):
@@ -763,10 +859,29 @@ class PuraloxApp:
             if not dct:
                 return
             for k, v in dct.items():
+                # Special handling for general:Dates to avoid huge lists
+                if prefix == "general" and k == "Dates":
+                    if isinstance(v, (list, tuple)):
+                        uniq = []
+                        for d in v:
+                            if d not in uniq:
+                                uniq.append(d)
+                        if len(uniq) == 0:
+                            v_str = ""
+                        elif len(uniq) == 1:
+                            v_str = uniq[0]
+                        else:
+                            v_str = f"{uniq[0]} – {uniq[-1]}"
+                    else:
+                        v_str = str(v) if v is not None else None
+                else:
+                    v_str = str(v) if v is not None else None
+
                 self.db.execute(
                     "INSERT INTO bet_summaries (file_info_id, key, value) VALUES (?, ?, ?)",
-                    (fid, f"{prefix}:{k}", str(v) if v is not None else None)
+                    (fid, f"{prefix}:{k}", v_str)
                 )
+
         _insert_summary("general", gen)
         _insert_summary("isotherm_summary", iso)
         _insert_summary("multipoint_bet_summary", mp)

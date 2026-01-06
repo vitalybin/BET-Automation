@@ -1,200 +1,299 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>BET PDF → DB Summary</title>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <meta charset="UTF-8">
+  <title>BET PDF View – {{ pdf_filename }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Bootstrap 5 -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
-    body { background:#f7f8fa }
-    .card { border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,.06) }
+    body { background:#f7f8fa; }
+    .card { border-radius:14px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+    .section-title {
+      font-size: .9rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      font-weight: 600;
+      color:#6c757d;
+      margin-bottom:.5rem;
+    }
+    .pill-badge {
+      display:inline-flex;
+      align-items:center;
+      gap:.35rem;
+      font-size:.8rem;
+      border-radius:999px;
+      padding:.15rem .7rem;
+      background:#fef3c7;
+      color:#92400e;
+    }
+    .pill-badge span.dot {
+      width:.5rem;
+      height:.5rem;
+      border-radius:999px;
+      background:#f59e0b;
+      display:inline-block;
+    }
+    .table-sm td, .table-sm th {
+      padding:.3rem .5rem;
+      font-size:.8rem;
+    }
+    .meta-grid dt {
+      font-size:.8rem;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      color:#6c757d;
+    }
+    .meta-grid dd {
+      margin-bottom:.75rem;
+      font-weight:500;
+    }
   </style>
 </head>
-<body class="bg-light">
-<div class="container py-5">
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+<body>
+<div class="container py-4 py-md-5">
+  <!-- Header -->
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
     <div>
-      <h1 class="mb-1">Imported PDF: {{ pdf_filename }}</h1>
-      <p class="text-muted mb-0">Full PDF report parsed into database (summary + BET points).</p>
+      <h1 class="h3 mb-1">📄 BET PDF Measurement – {{ pdf_filename }}</h1>
+      <p class="text-muted mb-0">
+        View of the extracted metadata and BET data points from the uploaded PDF report,
+        together with an interactive plot.
+      </p>
     </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="/files">Back to list</a>
-      <a class="btn btn-outline-primary" href="/">Upload new</a>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="/files" class="btn btn-outline-secondary btn-sm">← Back to list</a>
+      <a href="{{ metadata_url }}" class="btn btn-outline-primary btn-sm">
+        Download Metadata (Excel)
+      </a>
     </div>
   </div>
 
-  <div class="card p-3 mb-3">
-    <p class="mb-1">BET points in DB: <strong>{{ bundle.points_count or 0 }}</strong></p>
-    <h5>Summaries</h5>
-    <ul>
-      {% for row in bundle.summaries %}
-        <li><code>{{ row.key }}</code> = {{ row.value }}</li>
-      {% endfor %}
-      {% if not bundle.summaries %}<li><em>No summaries stored</em></li>{% endif %}
-    </ul>
-  </div>
+  <div class="row g-4">
+    <!-- Left column: clean meta + compact summary -->
+    <div class="col-lg-5">
+      <!-- Measurement meta -->
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+              <div class="section-title">Measurement Meta Data</div>
+              <h2 class="h5 mb-0">
+                {{ file_info.comment5 or file_info.comment1 or pdf_filename }}
+              </h2>
+            </div>
+            <div class="pill-badge">
+              <span class="dot"></span>
+              <span>PDF</span>
+            </div>
+          </div>
 
-  <!-- ELN push card -->
-  <div class="card p-3 mb-3">
-    <h5 class="mb-2">Send this PDF-based result to ELN</h5>
-    <p class="text-muted mb-2">
-      Select an ELN <strong>template</strong>. Currently this does not change the body content,
-      but the template ID is recorded and used as a tag in ELN.
-    </p>
-    <form class="row g-2 align-items-end" onsubmit="return pushELN(event, {{ bundle.file_id }})">
-      <div class="col-sm-4 col-12">
-        <label class="form-label mb-1">Template (optional)</label>
-        <select name="template_id" class="form-select template-select">
-          <option value="">Loading templates…</option>
-        </select>
-      </div>
-      <div class="col-sm-4 col-12">
-        <label class="form-label mb-1">Title (optional)</label>
-        <input name="title"
-               class="form-control"
-               placeholder="BET result for ..."
-               value="File {{ bundle.file_id }}">
-      </div>
-      <div class="col-sm-4 col-12">
-        <button class="btn btn-success w-100" type="submit">Send to ELN</button>
-      </div>
-    </form>
-    <div class="mt-2 small text-muted" id="eln-status-text"></div>
-  </div>
+          <dl class="row meta-grid mb-0">
+            <dt class="col-5">Sample date</dt>
+            <dd class="col-7">
+              {{ file_info.date_of_measurement or '—' }}
+              {% if file_info.time_of_measurement %} {{ file_info.time_of_measurement }}{% endif %}
+            </dd>
 
-  <!-- Metadata Excel -->
-  <div class="mb-3">
-    <a href="{{ metadata_url }}" class="btn btn-sm btn-outline-secondary">
-      Download metadata Excel
-    </a>
-  </div>
+            <dt class="col-5">Operator</dt>
+            <dd class="col-7">
+              {{ file_info.comment2 or '—' }}
+            </dd>
 
-  <div class="mt-3">
-    <a class="btn btn-secondary" href="/">Back to upload</a>
-    <a class="btn btn-outline-primary" href="/files">View all files</a>
+            <dt class="col-5">Instrument</dt>
+            <dd class="col-7">
+              {{ file_info.comment4 or '—' }}
+            </dd>
+
+            <dt class="col-5">Serial #</dt>
+            <dd class="col-7">
+              {{ file_info.serial_number or '—' }}
+            </dd>
+
+            <dt class="col-5">Version</dt>
+            <dd class="col-7">
+              {{ file_info.version or '—' }}
+            </dd>
+
+            <dt class="col-5">Conditions</dt>
+            <dd class="col-7">
+              {{ file_info.comment3 or '—' }}
+            </dd>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Compact extracted summary (only BET / t-plot) -->
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="section-title">Extracted Summary (BET / t-Plot)</div>
+          {% if bundle.summaries %}
+            <div class="table-responsive">
+              <table class="table table-sm table-striped mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">Section</th>
+                    <th scope="col">Field</th>
+                    <th scope="col">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {% for s in bundle.summaries %}
+                  {% set parts = s.key.split(':', 1) %}
+                  <tr>
+                    <td class="text-nowrap">
+                      {{ parts[0].replace('_', ' ') }}
+                    </td>
+                    <td class="text-nowrap">
+                      {{ parts[1] if parts|length > 1 else '' }}
+                    </td>
+                    <td>{{ s.value }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0"><em>No BET/t-Plot summary fields extracted.</em></p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Right column: Plot + raw data -->
+    <div class="col-lg-7">
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+              <div class="section-title">BET Plot</div>
+              <h2 class="h5 mb-0">p/po vs p/va (BET transform)</h2>
+            </div>
+          </div>
+
+          {% if pts_data and pts_data|length > 1 %}
+            <canvas id="betChartPdf" style="max-height:420px;"></canvas>
+          {% else %}
+            <p class="text-muted mb-0"><em>No valid BET points available to plot.</em></p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+              <div class="section-title">Raw Extracted BET Data</div>
+              <h2 class="h6 mb-0">
+                {{ pts_data|length if pts_data else 0 }} points
+              </h2>
+            </div>
+          </div>
+
+          {% if pts_data and pts_data|length > 0 %}
+            <div class="table-responsive">
+              <table class="table table-sm table-striped mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">p/p0</th>
+                    <th scope="col">p/va_p0_p</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {% for p in pts_data %}
+                  <tr>
+                    <td>{{ p.no }}</td>
+                    <td>
+                      {% if p.p_p0 is not none %}
+                        {{ "%.5f"|format(p.p_p0) }}
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if p.p_va_p0_p is not none %}
+                        {{ "%.5f"|format(p.p_va_p0_p) }}
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0"><em>No BET data points stored for this PDF.</em></p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
 <script>
-let ELN_TEMPLATES = null;
-let ELN_TEMPLATES_ERROR = null;
+(function() {
+  const ptsData = {{ pts_data|tojson }};
+  if (!ptsData || ptsData.length < 2) return;
 
-async function loadTemplatesOnce() {
-  if (ELN_TEMPLATES !== null || ELN_TEMPLATES_ERROR !== null) {
-    return;
-  }
-  try {
-    const r = await fetch('/api/elab/templates', { headers: { 'Accept': 'application/json' }});
-    if (!r.ok) {
-      ELN_TEMPLATES_ERROR = 'HTTP ' + r.status;
-      console.error('Template fetch error status', r.status);
-      return;
-    }
-    const data = await r.json();
-    if (!Array.isArray(data)) {
-      ELN_TEMPLATES_ERROR = 'Invalid JSON shape';
-      console.error('Template fetch invalid data', data);
-      return;
-    }
-    ELN_TEMPLATES = data;
-    console.log('Loaded ELN templates:', data);
-  } catch (e) {
-    ELN_TEMPLATES_ERROR = String(e);
-    console.error('Template fetch failed', e);
-  }
-}
+  const xVals = ptsData.map(p => p.p_p0);
+  const yVals = ptsData.map(p => p.p_va_p0_p);
 
-async function populateTemplateSelects() {
-  await loadTemplatesOnce();
-  const selects = document.querySelectorAll('select.template-select');
-  if (!selects.length) return;
+  const ctx = document.getElementById('betChartPdf');
+  if (!ctx) return;
 
-  if (ELN_TEMPLATES_ERROR) {
-    selects.forEach(sel => {
-      sel.innerHTML = '<option value="">Templates unavailable</option>';
-    });
-    return;
-  }
-
-  if (!ELN_TEMPLATES || !ELN_TEMPLATES.length) {
-    selects.forEach(sel => {
-      sel.innerHTML = '<option value="">No templates found</option>';
-    });
-    return;
-  }
-
-  selects.forEach(sel => {
-    const current = sel.value;
-    sel.innerHTML = '';
-    const optNone = document.createElement('option');
-    optNone.value = '';
-    optNone.textContent = 'No template';
-    sel.appendChild(optNone);
-
-    ELN_TEMPLATES.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t.id;
-      opt.textContent = `${t.id} – ${t.title}`;
-      if (String(t.id) === String(current)) {
-        opt.selected = true;
+  const data = {
+    labels: xVals,
+    datasets: [
+      {
+        label: 'BET data (p/po vs p/va_p0_p)',
+        data: yVals,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        tension: 0.1
       }
-      sel.appendChild(opt);
-    });
-  });
-}
+    ]
+  };
 
-document.addEventListener('DOMContentLoaded', () => {
-  populateTemplateSelects();
-});
-
-async function pushELN(ev, fileId) {
-  ev.preventDefault();
-  const form = ev.target;
-  const btn  = form.querySelector('button[type="submit"]');
-  const status = document.getElementById('eln-status-text');
-  const fd   = new FormData(form);
-  const origText = btn.textContent;
-
-  btn.disabled = true;
-  btn.textContent = 'Pushing…';
-  if (status) status.textContent = 'Pushing to ELN…';
-
-  try {
-    const r = await fetch(`/eln/${fileId}`, {
-      method: 'POST',
-      body: fd,
-      headers: { 'Accept': 'application/json' }
-    });
-
-    let data;
-    try {
-      data = await r.json();
-    } catch (e) {
-      if (status) status.textContent = 'ELN push failed: invalid JSON from server.';
-      alert('ELN push failed: invalid JSON from server');
-      return false;
+  const config = {
+    type: 'line',
+    data: data,
+    options: {
+      responsive: true,
+      interaction: {
+        mode: 'nearest',
+        axis: 'x',
+        intersect: false
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              const x = ctx.label;
+              const y = ctx.parsed.y;
+              return `p/po=${x}, p/va_p0_p=${y}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: 'p/p0' } },
+        y: { title: { display: true, text: 'p/va_p0_p' } }
+      }
     }
+  };
 
-    if (!r.ok || !data.ok) {
-      const msg = (data && data.error) ? data.error : r.statusText;
-      if (status) status.textContent = 'ELN push failed: ' + msg;
-      alert('ELN push failed: ' + msg);
-    } else {
-      const msg = 'Experiment created (ID ' + data.exp_id +
-                  (data.template_id ? ', template ' + data.template_id : '') + ')';
-      if (status) status.textContent = msg;
-      alert('ELN created ✅  Experiment ID: ' + data.exp_id +
-            (data.template_id ? (' | Template: ' + data.template_id) : ''));
-    }
-  } catch (e) {
-    if (status) status.textContent = 'Network / JSON error: ' + e;
-    alert('Network/JSON error: ' + e);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = origText;
-  }
-  return false;
-}
+  new Chart(ctx, config);
+})();
 </script>
+
 </body>
 </html>
