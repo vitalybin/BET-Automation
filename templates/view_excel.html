@@ -1,311 +1,392 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>BET Excel View – File #{{ file_id }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <!-- Bootstrap 5 -->
+  <title>BET Excel View</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-
-  <!-- Chart.js for interactive plot -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
   <style>
     body { background:#f7f8fa; }
-    .card { border-radius:14px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
-    .section-title {
-      font-size: .9rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      font-weight: 600;
-      color:#6c757d;
-      margin-bottom:.5rem;
+    .card { border-radius: 14px; box-shadow: 0 4px 24px rgba(0,0,0,.06); }
+    .pill {
+      display:inline-flex;align-items:center;gap:.35rem;
+      border-radius:999px;padding:.25rem .75rem;font-size:.8rem;
     }
-    .meta-grid dt {
-      font-size:.8rem;
-      text-transform:uppercase;
-      letter-spacing:.06em;
-      color:#6c757d;
+    .pill-campus-south { background:#0d6efd0f;color:#0d6efd;border:1px solid #0d6efd33;}
+    .meta-label { font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:#6c757d; }
+    .chart-wrapper {
+      width:100%;
+      max-width:900px;
+      height:360px;
+      padding:1rem;
+      border-radius:12px;
+      background:#fff;
+      border:1px solid rgba(0,0,0,.06);
+      overflow:hidden;
     }
-    .meta-grid dd {
-      margin-bottom:.75rem;
-      font-weight:500;
-    }
-    .table-sm td, .table-sm th {
-      padding:.3rem .45rem;
-      font-size:.8rem;
-    }
-    .pill-badge {
-      display:inline-flex;
-      align-items:center;
-      gap:.35rem;
-      font-size:.8rem;
-      border-radius:999px;
-      padding:.15rem .7rem;
-      background:#eef2ff;
-      color:#4338ca;
-    }
-    .pill-badge span.dot {
-      width:.5rem;
-      height:.5rem;
-      border-radius:999px;
-      background:#4f46e5;
-      display:inline-block;
-    }
-
-    /* Hide id + file_info_id columns in BET + Technical tables to make them cleaner */
-    .table-bet   th:nth-child(1),
-    .table-bet   td:nth-child(1),
-    .table-bet   th:nth-child(2),
-    .table-bet   td:nth-child(2),
-    .table-tech  th:nth-child(1),
-    .table-tech  td:nth-child(1),
-    .table-tech  th:nth-child(2),
-    .table-tech  td:nth-child(2) {
-      display:none;
-    }
-
-    /* Slight extra spacing between stacked cards on the left column */
-    .stack-card + .stack-card {
-      margin-top: .75rem;
-    }
+    .table-sm th, .table-sm td { padding:.25rem .5rem; }
   </style>
 </head>
 <body>
-<div class="container py-4 py-md-5">
-  <!-- Header -->
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+<div class="container py-4">
+
+  <!-- Back / header -->
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
     <div>
-      <h1 class="h3 mb-1">📊 BET Excel Measurement – File #{{ file_id }}</h1>
-      <p class="text-muted mb-0">
-        Detailed view of the imported BET Excel file, including metadata, parameters,
-        raw data and an interactive BET plot.
-      </p>
+      <a href="{{ url_for('list_files') }}" class="btn btn-link p-0 mb-1">&larr; Back to list</a>
+      <h1 class="h3 mb-0">Excel BET Measurement</h1>
+      <div class="text-muted small">Detailed view &amp; plot controls (Excel source)</div>
     </div>
-    <div class="d-flex flex-wrap gap-2">
-      <a href="/files" class="btn btn-outline-secondary btn-sm">← Back to list</a>
-      <a href="{{ metadata_url }}" class="btn btn-outline-primary btn-sm">
-        Download Metadata (Excel)
-      </a>
+    <div class="d-flex align-items-center gap-2">
+      <span class="pill pill-campus-south">
+        <span class="badge bg-primary rounded-pill">&nbsp;</span>
+        KIT Campus South (Excel)
+      </span>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ metadata_url }}">Download metadata</a>
     </div>
   </div>
 
-  <!-- Main layout -->
-  <div class="row g-4">
-    <!-- Left column: Meta + tables -->
-    <div class="col-lg-5">
-      <!-- File info -->
-      <div class="card mb-3 stack-card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <div class="section-title">File Info</div>
-              {% if not info.empty %}
-                {% set row = info.iloc[0] %}
-                <h2 class="h5 mb-0">{{ row['file_name'] }}</h2>
-              {% else %}
-                <h2 class="h5 mb-0">File #{{ file_id }}</h2>
-              {% endif %}
-            </div>
-            <div class="pill-badge">
-              <span class="dot"></span>
-              <span>Excel</span>
-            </div>
+  {# info, bet, tech are dicts; pts is a list of dicts #}
+  {% set info_row = info or {} %}
+  {% set bet_row  = bet  or {} %}
+  {% set tech_row = tech or {} %}
+  {% set pts_rows = pts  or [] %}
+
+  <!-- Top meta card -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between flex-wrap gap-3">
+        <div>
+          <div class="meta-label mb-1">Measurement ID</div>
+          <h2 class="h5 mb-1">
+            {{ info_row.get('comment5') or info_row.get('file_name') or ('File ' ~ file_id) }}
+          </h2>
+          <div class="text-muted small">
+            File: <code>{{ info_row.get('file_name') }}</code>
           </div>
-
-          {% if not info.empty %}
-            {% set row = info.iloc[0] %}
-            <dl class="row meta-grid">
-              <dt class="col-5">Measurement ID</dt>
-              <dd class="col-7">
-                {{ row.get('comment5','') or '—' }}
-              </dd>
-
-              <dt class="col-5">Date</dt>
-              <dd class="col-7">
-                {{ row.get('date_of_measurement','') or '—' }}
-                {{ row.get('time_of_measurement','') or '' }}
-              </dd>
-
-              <dt class="col-5">Operator</dt>
-              <dd class="col-7">
-                {{ row.get('comment2','') or '—' }}
-              </dd>
-
-              <dt class="col-5">Instrument</dt>
-              <dd class="col-7">
-                {{ row.get('comment4','') or '—' }}
-              </dd>
-
-              <dt class="col-5">Serial #</dt>
-              <dd class="col-7">
-                {{ row.get('serial_number','') or '—' }}
-              </dd>
-
-              <dt class="col-5">Version</dt>
-              <dd class="col-7">
-                {{ row.get('version','') or '—' }}
-              </dd>
-
-              <dt class="col-5">Pretreatment</dt>
-              <dd class="col-7">
-                {{ row.get('comment3','') or '—' }}
-              </dd>
-            </dl>
-          {% else %}
-            <p class="text-muted mb-0"><em>No file_info record found.</em></p>
-          {% endif %}
+        </div>
+        <div class="text-end small">
+          <div>
+            <span class="meta-label">Date / Time</span><br>
+            {{ info_row.get('date_of_measurement') or '—' }}
+            {{ info_row.get('time_of_measurement') or '' }}
+          </div>
+          <div class="mt-2">
+            <span class="meta-label">Operator</span><br>
+            {{ info_row.get('comment2') or '—' }}
+          </div>
         </div>
       </div>
 
+      <hr>
+
+      <div class="row small">
+        <div class="col-md-4 mb-2">
+          <div class="meta-label">Instrument</div>
+          <div>{{ info_row.get('comment4') or '—' }}</div>
+        </div>
+        <div class="col-md-4 mb-2">
+          <div class="meta-label">Serial #</div>
+          <div>{{ info_row.get('serial_number') or '—' }}</div>
+        </div>
+        <div class="col-md-4 mb-2">
+          <div class="meta-label">Version</div>
+          <div>{{ info_row.get('version') or '—' }}</div>
+        </div>
+      </div>
+
+      <div class="row small mt-2">
+        <div class="col-md-4 mb-2">
+          <div class="meta-label">Scientist (Sample Prep)</div>
+          <div>{{ info_row.get('comment2') or '—' }}</div>
+        </div>
+        <div class="col-md-8 mb-2">
+          <div class="meta-label">Measurement Conditions</div>
+          <div>{{ info_row.get('comment3') or '—' }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layout: left = params, right = chart + ELN -->
+  <div class="row">
+    <!-- Left column: tables -->
+    <div class="col-lg-5 mb-4">
       <!-- BET parameters -->
-      <div class="card mb-3 stack-card">
-        <div class="card-body">
-          <div class="section-title">BET Parameters</div>
-          {% if not bet.empty %}
-            <div class="table-responsive">
-              {{ bet.to_html(classes="table table-sm table-striped mb-0 table-bet", index=False)|safe }}
-            </div>
+      <div class="card mb-3">
+        <div class="card-header py-2">
+          <strong>BET parameters</strong>
+        </div>
+        <div class="card-body p-2">
+          {% if bet_row %}
+            <table class="table table-sm mb-0">
+              <tbody>
+              {% for k, v in bet_row.items() %}
+                {% if k not in ["id","file_info_id"] %}
+                <tr>
+                  <th class="text-nowrap">{{ k }}</th>
+                  <td>{{ v if v is not none else "—" }}</td>
+                </tr>
+                {% endif %}
+              {% endfor %}
+              </tbody>
+            </table>
           {% else %}
-            <p class="text-muted mb-0"><em>No BET parameters stored.</em></p>
+            <p class="text-muted small mb-0">No BET parameters found.</p>
           {% endif %}
         </div>
       </div>
 
       <!-- Technical info -->
-      <div class="card mb-3 stack-card">
-        <div class="card-body">
-          <div class="section-title">Technical Info</div>
-          {% if not tech.empty %}
-            <div class="table-responsive">
-              {{ tech.to_html(classes="table table-sm table-striped mb-0 table-tech", index=False)|safe }}
-            </div>
-          {% else %}
-            <p class="text-muted mb-0"><em>No technical info stored.</em></p>
-          {% endif %}
-        </div>
-      </div>
-
-      <!-- Plot columns -->
-      <div class="card mb-3 stack-card">
-        <div class="card-body">
-          <div class="section-title">Plot Columns</div>
-          {% if not cols.empty %}
-            <div class="table-responsive">
-              {{ cols.to_html(classes="table table-sm table-striped mb-0", index=False)|safe }}
-            </div>
-          {% else %}
-            <p class="text-muted mb-0"><em>No plot column definitions.</em></p>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-
-    <!-- Right column: Plot + data table -->
-    <div class="col-lg-7">
-      <!-- Interactive BET plot -->
       <div class="card mb-3">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <div class="section-title">BET Plot</div>
-              <h2 class="h5 mb-0">p/po vs p/va (BET transform)</h2>
-            </div>
-          </div>
-          {% if pts_data and pts_data|length > 1 %}
-            <canvas id="betChart" style="max-height:420px;"></canvas>
+        <div class="card-header py-2">
+          <strong>Technical info</strong>
+        </div>
+        <div class="card-body p-2">
+          {% if tech_row %}
+            <table class="table table-sm mb-0">
+              <tbody>
+              {% for k, v in tech_row.items() %}
+                {% if k not in ["id","file_info_id"] %}
+                <tr>
+                  <th class="text-nowrap">{{ k }}</th>
+                  <td>{{ v if v is not none else "—" }}</td>
+                </tr>
+                {% endif %}
+              {% endfor %}
+              </tbody>
+            </table>
           {% else %}
-            <p class="text-muted mb-0"><em>Not enough points to draw a BET plot.</em></p>
+            <p class="text-muted small mb-0">No technical info found.</p>
           {% endif %}
         </div>
       </div>
 
-      <!-- Raw data points -->
+      <!-- BET points table -->
       <div class="card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <div class="section-title">Raw BET Data</div>
-              <h2 class="h6 mb-0">
-                {{ pts.shape[0] if pts is not none else 0 }} points
-              </h2>
-            </div>
-          </div>
-          {% if pts is not none and not pts.empty %}
-            <div class="table-responsive">
-              {{ pts.to_html(classes="table table-sm table-striped mb-0", index=False)|safe }}
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+          <strong>BET points (raw)</strong>
+          <span class="badge bg-light text-muted">{{ pts_rows|length }} pts</span>
+        </div>
+        <div class="card-body p-0">
+          {% if pts_rows %}
+            <div class="table-responsive" style="max-height:260px;overflow:auto;">
+              <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th>
+                    <th>P/Po</th>
+                    <th>p_va_p0_p</th>
+                    <th>va_cc_g_stp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {% for row in pts_rows %}
+                  <tr>
+                    <td>{{ row.no }}</td>
+                    <td>{{ row.p_p0 }}</td>
+                    <td>{{ row.p_va_p0_p }}</td>
+                    <td>{{ row.va_cc_g_stp }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
             </div>
           {% else %}
-            <p class="text-muted mb-0"><em>No BET data points stored.</em></p>
+            <p class="text-muted small mb-2 px-3 py-2">No BET data points found.</p>
           {% endif %}
         </div>
       </div>
     </div>
-  </div>
-</div>
 
+    <!-- Right column: chart + ELN -->
+    <div class="col-lg-7 mb-4">
+      <div class="card mb-3">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+          <strong>BET plot (Excel)</strong>
+          <span class="text-muted small">p/va_p0_p vs P/Po</span>
+        </div>
+        <div class="card-body">
+          <div class="mb-3 small">
+            <div class="meta-label mb-1">Plot range (P/Po)</div>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+              <div class="input-group input-group-sm" style="max-width:150px;">
+                <span class="input-group-text">Min</span>
+                <input type="number" step="0.001" class="form-control" id="pmin-input">
+              </div>
+              <div class="input-group input-group-sm" style="max-width:150px;">
+                <span class="input-group-text">Max</span>
+                <input type="number" step="0.001" class="form-control" id="pmax-input">
+              </div>
+              <button class="btn btn-sm btn-outline-primary" id="apply-range-btn">
+                Apply range
+              </button>
+              <button class="btn btn-sm btn-outline-secondary" id="reset-range-btn">
+                Reset
+              </button>
+            </div>
+          </div>
+
+          <div class="chart-wrapper mb-3">
+            <canvas id="betChart"></canvas>
+          </div>
+
+          <!-- ELN push from detail view -->
+          <div class="border-top pt-3 mt-2">
+            <form id="eln-form"
+                  class="d-flex flex-wrap gap-2 align-items-center"
+                  onsubmit="return pushELNFromDetail(event)">
+              <input type="hidden" name="plot_xmin" id="eln-plot-xmin">
+              <input type="hidden" name="plot_xmax" id="eln-plot-xmax">
+              <input type="hidden" name="title"
+                     value="{{ info_row.get('comment5') or info_row.get('file_name') or ('File ' ~ file_id) }}">
+              <div class="small text-muted me-2">
+                Range sent to ELN is the current P/Po window.
+              </div>
+              <button type="submit" class="btn btn-success btn-sm">
+                Send this plot to ELN
+              </button>
+              <span id="eln-detail-status" class="small text-muted">Not pushed yet</span>
+            </form>
+          </div>
+        </div>
+      </div>
+
+    </div> <!-- /col-lg-7 -->
+  </div> <!-- /row -->
+
+</div> <!-- /container -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-(function() {
-  const ptsData = {{ pts_data|tojson }};
-  if (!ptsData || ptsData.length < 2) return;
+  // Data from backend: list of {no, p_p0, p_va_p0_p}
+  const ptsData = {{ pts_data | tojson | safe }};
+  const fileId = {{ file_id }};
 
-  const xVals = ptsData.map(p => p.p_p0);
-  const yVals = ptsData.map(p => p.p_va_p0_p);
+  let chartInstance = null;
+  let currentMin = null;
+  let currentMax = null;
 
-  const ctx = document.getElementById('betChart');
-  if (!ctx) return;
+  function buildDataset(filtered) {
+    const xs = filtered.map(p => p.p_p0);
+    const ys = filtered.map(p => p.p_va_p0_p);
+    return { xs, ys };
+  }
 
-  const data = {
-    labels: xVals,
-    datasets: [
-      {
-        label: 'BET data (p/po vs p/va_p0_p)',
-        data: yVals,
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        tension: 0.1
-      }
-    ]
-  };
+  function renderChart(minVal=null, maxVal=null) {
+    const canvas = document.getElementById('betChart');
+    if (!canvas) return;
 
-  const config = {
-    type: 'line',
-    data: data,
-    options: {
-      responsive: true,
-      interaction: {
-        mode: 'nearest',
-        axis: 'x',
-        intersect: false
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: function(ctx) {
-              const x = ctx.label;
-              const y = ctx.parsed.y;
-              return `p/po=${x}, p/va_p0_p=${y}`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          title: { display: true, text: 'p/p0' }
-        },
-        y: {
-          title: { display: true, text: 'p/va_p0_p' }
-        }
-      }
+    let ptsFiltered = ptsData.slice();
+    if (minVal !== null) {
+      ptsFiltered = ptsFiltered.filter(p => p.p_p0 >= minVal);
     }
-  };
+    if (maxVal !== null) {
+      ptsFiltered = ptsFiltered.filter(p => p.p_p0 <= maxVal);
+    }
+    if (!ptsFiltered.length) {
+      ptsFiltered = ptsData.slice();
+    }
 
-  new Chart(ctx, config);
-})();
+    const { xs, ys } = buildDataset(ptsFiltered);
+
+    if (chartInstance) {
+      chartInstance.destroy();
+    }
+    chartInstance = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: xs,
+        datasets: [{
+          label: 'BET (Excel)',
+          data: ys,
+          pointRadius: 2,
+          borderWidth: 1.5,
+          tension: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: 'P/Po' } },
+          y: { title: { display: true, text: 'p/va_p0_p' } }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { mode: 'index', intersect: false }
+        }
+      }
+    });
+
+    currentMin = (minVal !== null) ? minVal : null;
+    currentMax = (maxVal !== null) ? maxVal : null;
+
+    document.getElementById('eln-plot-xmin').value = (currentMin !== null ? currentMin : '');
+    document.getElementById('eln-plot-xmax').value = (currentMax !== null ? currentMax : '');
+  }
+
+  // init inputs and chart
+  (function init() {
+    if (!ptsData.length) return;
+    const ps = ptsData.map(p => p.p_p0).filter(v => typeof v === 'number');
+    if (!ps.length) return;
+    const minP = Math.min.apply(null, ps);
+    const maxP = Math.max.apply(null, ps);
+    document.getElementById('pmin-input').value = minP.toFixed(3);
+    document.getElementById('pmax-input').value = maxP.toFixed(3);
+    renderChart();
+  })();
+
+  document.getElementById('apply-range-btn').addEventListener('click', function() {
+    const minVal = parseFloat(document.getElementById('pmin-input').value);
+    const maxVal = parseFloat(document.getElementById('pmax-input').value);
+    const mv = isNaN(minVal) ? null : minVal;
+    const xv = isNaN(maxVal) ? null : maxVal;
+    renderChart(mv, xv);
+  });
+
+  document.getElementById('reset-range-btn').addEventListener('click', function() {
+    if (!ptsData.length) return;
+    const ps = ptsData.map(p => p.p_p0).filter(v => typeof v === 'number');
+    if (!ps.length) return;
+    const minP = Math.min.apply(null, ps);
+    const maxP = Math.max.apply(null, ps);
+    document.getElementById('pmin-input').value = minP.toFixed(3);
+    document.getElementById('pmax-input').value = maxP.toFixed(3);
+    renderChart();
+  });
+
+  async function pushELNFromDetail(ev) {
+    ev.preventDefault();
+    const form = ev.target;
+    const statusEl = document.getElementById('eln-detail-status');
+    statusEl.textContent = 'Pushing to ELN…';
+
+    const fd = new FormData(form);
+    try {
+      const resp = await fetch(`/eln/${fileId}`, {
+        method: 'POST',
+        body: fd,
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        const msg = (data && data.error) ? data.error : resp.statusText;
+        statusEl.textContent = 'Failed: ' + msg;
+        alert('ELN push failed: ' + msg);
+      } else {
+        statusEl.textContent = 'OK (ID ' + data.exp_id + ')';
+        alert('ELN entry created with ID ' + data.exp_id);
+      }
+    } catch (e) {
+      console.error(e);
+      statusEl.textContent = 'Failed (network/JSON error)';
+      alert('Network/JSON error: ' + e);
+    }
+    return false;
+  }
 </script>
-
 </body>
 </html>
