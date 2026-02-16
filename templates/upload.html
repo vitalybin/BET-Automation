@@ -22,8 +22,11 @@
                 <h4 class="mb-3">📤 Upload New File</h4>
                 <form method="post" enctype="multipart/form-data">
                     <div class="mb-3">
-                        <input class="form-control" type="file" name="file" accept=".xlsx,.xls,.pdf" required>
-                        <div class="form-text">Accepted: .xlsx / .xls (Excel) or .pdf (BET report)</div>
+                        <input class="form-control" type="file" name="file"
+                               accept=".xlsx,.xls,.pdf,.xdi,.txt" required>
+                        <div class="form-text">
+                            Accepted: .xlsx / .xls (Excel) or .pdf (BET report) or .xdi / .txt (XDI)
+                        </div>
                     </div>
                     <button type="submit" class="btn btn-primary w-100 btn-lg">Upload File</button>
                 </form>

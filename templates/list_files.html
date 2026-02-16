@@ -67,20 +67,27 @@
                 {% endif %}
               </div>
             </td>
+
+            <!-- ✅ FIXED: Type shows PDF / XDI / Excel -->
             <td>
               {% if it.type == 'PDF' %}
                 <span class="badge bg-warning text-dark file-badge">PDF</span>
+              {% elif it.type == 'XDI' %}
+                <span class="badge bg-dark file-badge">XDI</span>
               {% else %}
                 <span class="badge bg-info text-dark file-badge">Excel</span>
               {% endif %}
             </td>
+
+            <!-- ✅ FIXED: Region uses it.region (XDI = Nord) -->
             <td>
-              {% if it.type == 'PDF' %}
+              {% if it.region == 'KIT Campus Nord' %}
                 <span class="badge bg-primary file-badge">KIT Campus Nord</span>
               {% else %}
                 <span class="badge bg-success file-badge">KIT Campus South</span>
               {% endif %}
             </td>
+
             <td>{{ it.date or '—' }}</td>
             <td>{{ it.time or '—' }}</td>
             <td>

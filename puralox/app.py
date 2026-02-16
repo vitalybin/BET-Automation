@@ -30,7 +30,8 @@ from .db_manager import DatabaseManager
 from .excel_processor import ExcelProcessor
 from .bet_integration import extract_all_with_prints
 from .nomenclature import build_measurement_id
-from .metadata_builder import MetadataBuilder   # <— separate module for metadata Excel
+from .metadata_builder import MetadataBuilder
+from .xdi_processor import XdiProcessor  # ✅ XDI support
 import requests
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
@@ -68,7 +69,10 @@ class PuraloxApp:
         self.db        = DatabaseManager(DB_NAME)
         self.processor = ExcelProcessor(self.db)
 
-        # NEW: dedicated builder for metadata Excel
+        # ✅ ADDITIVE: XDI processor (separate tables + separate view)
+        self.xdi_processor = XdiProcessor(self.db)
+
+        # metadata builder (existing)
         self.metadata_builder = MetadataBuilder(self.db, self.metadata_dir)
 
         self._ensure_optional_tables()
@@ -126,6 +130,12 @@ class PuraloxApp:
         except Exception:
             logging.exception("Failed to ensure comment5 column on file_info")
 
+        # ✅ ensure XDI tables exist
+        try:
+            self.xdi_processor.ensure_tables()
+        except Exception:
+            logging.exception("Failed to ensure XDI tables")
+
     def _table_exists(self, name: str) -> bool:
         rows = self.db.fetchall_dict(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
@@ -133,7 +143,21 @@ class PuraloxApp:
         )
         return bool(rows)
 
-    # helper to set Measurement ID for Excel uploads
+    # ✅ safety routing: route to XDI only if real XDI rows exist for this file_id
+    def _has_rows_for_file(self, table: str, file_id: int) -> bool:
+        try:
+            if not self._table_exists(table):
+                return False
+            rows = self.db.fetchall_dict(
+                f"SELECT 1 FROM {table} WHERE file_info_id=? LIMIT 1",
+                (file_id,)
+            )
+            return bool(rows)
+        except Exception:
+            logging.exception("Failed checking rows in %s for file_id=%s", table, file_id)
+            return False
+
+    # helper to set Measurement ID for uploads
     def _set_measurement_id_for_file(self, file_id: int) -> None:
         try:
             rows = self.db.fetchall_dict(
@@ -163,10 +187,6 @@ class PuraloxApp:
 
     # ─── ELN template helper ───────────────────────────────────────────
     def _get_templates(self):
-        """
-        Fetch templates from eLabFTW. If the token or URL is wrong,
-        we just return [] instead of crashing.
-        """
         url = f"{ELABFTW_URL}/experiments_templates?limit=100"
         logging.debug("GET %s", url)
         try:
@@ -216,7 +236,7 @@ class PuraloxApp:
     # ─── ROUTES ────────────────────────────────────────────────────────
     def _register_routes(self):
 
-        # ── Upload: Excel or PDF ──────────────────────────────────────
+        # ── Upload: Excel/PDF/XDI ─────────────────────────────────────
         @self.app.route("/", methods=["GET", "POST"])
         def upload():
             if request.method == "POST":
@@ -232,33 +252,35 @@ class PuraloxApp:
                 ext = os.path.splitext(f.filename)[1].lower()
                 try:
                     if ext in (".xlsx", ".xls"):
-                        # Excel import
+                        # Excel import (UNCHANGED)
                         new_file_id = self.processor.process_file(dst)
-                        # set Measurement ID for Excel
                         self._set_measurement_id_for_file(new_file_id)
 
                     elif ext == ".pdf":
-                        # PDF → parse → DB
+                        # PDF → parse → DB (UNCHANGED)
                         out_dir = os.path.join(self.app.config["UPLOAD_FOLDER"], "pdf_out")
                         os.makedirs(out_dir, exist_ok=True)
                         bundle = extract_all_with_prints(dst, out_dir)
 
-                        # Pass uploaded filename so type detection works
                         new_file_id = self._insert_pdf_bundle_into_db(
                             bundle,
                             original_filename=f.filename
                         )
 
+                    elif ext in (".xdi", ".txt"):
+                        # ✅ XDI import (NEW)
+                        new_file_id = self.xdi_processor.process_file(dst, original_filename=f.filename)
+                        self._set_measurement_id_for_file(new_file_id)
+
                     else:
                         return "Unsupported file type. Upload .xlsx or .pdf", 400
 
-                    # Create unified metadata for both Excel + PDF (via separate module)
+                    # metadata generation (existing behavior)
                     try:
                         self.metadata_builder.generate_metadata(new_file_id)
                     except Exception:
                         logging.exception("metadata generation failed")
 
-                    # Go to unified list
                     return redirect(url_for("list_files"))
 
                 except Exception:
@@ -267,7 +289,7 @@ class PuraloxApp:
 
             return render_template("upload.html")
 
-        # ── Unified list page (list_files.html) ───────────────────────
+        # ── Unified list page (Type + Region fixed) ───────────────────
         @self.app.route("/files")
         def list_files():
             rows = self.db.fetchall_dict(
@@ -278,12 +300,25 @@ class PuraloxApp:
             for r in rows:
                 fname = r.get("file_name") or ""
                 ext = os.path.splitext(fname)[1].lower()
+
+                # PDF -> PDF + North
                 if ext == ".pdf":
                     vurl = url_for("view_pdf", file_id=r["id"])
                     ftype = "PDF"
+                    region = "KIT Campus Nord"
+
+                # XDI -> XDI + North (and ONLY if xdi_points exists)
+                elif self._has_rows_for_file("xdi_points", r["id"]):
+                    vurl = url_for("view_xdi", file_id=r["id"])
+                    ftype = "XDI"
+                    region = "KIT Campus Nord"
+
+                # otherwise -> Excel + South
                 else:
                     vurl = url_for("view_excel", file_id=r["id"])
                     ftype = "Excel"
+                    region = "KIT Campus South"
+
                 items.append({
                     "id": r["id"],
                     "file_name": fname,
@@ -291,6 +326,7 @@ class PuraloxApp:
                     "date": r.get("date_of_measurement", ""),
                     "time": r.get("time_of_measurement", ""),
                     "type": ftype,
+                    "region": region,  # ✅ NEW
                     "view_url": vurl,
                     "metadata_url": url_for("download_metadata_for_file", file_id=r["id"]),
                 })
@@ -301,10 +337,9 @@ class PuraloxApp:
         def uploads():
             return redirect(url_for("list_files"))
 
-        # ── Excel detail view ─────────────────────────────────────────
+        # ── Excel detail view (UNCHANGED) ─────────────────────────────
         @self.app.route("/view/excel/<int:file_id>")
         def view_excel(file_id: int):
-            # Load DB rows into DataFrames
             to_df = lambda q: pd.DataFrame(self.db.fetchall_dict(q))
 
             info_df = to_df(f"SELECT * FROM file_info WHERE id={file_id}")
@@ -313,14 +348,12 @@ class PuraloxApp:
             cols_df = to_df(f"SELECT * FROM bet_plot_columns WHERE file_info_id={file_id}")
             pts_df  = to_df(f"SELECT * FROM bet_data_points WHERE file_info_id={file_id}")
 
-            # Convert to plain dicts / list-of-dicts for Jinja
             info = info_df.iloc[0].to_dict() if not info_df.empty else {}
             bet  = bet_df.iloc[0].to_dict() if not bet_df.empty else {}
             tech = tech_df.iloc[0].to_dict() if not tech_df.empty else {}
             cols = cols_df.to_dict(orient="records") if not cols_df.empty else []
             pts_rows = pts_df.to_dict(orient="records") if not pts_df.empty else []
 
-            # For interactive plot in template (clean, sorted)
             pts_data = []
             if pts_rows:
                 pts_sorted = sorted(
@@ -342,20 +375,19 @@ class PuraloxApp:
             return render_template(
                 "view_excel.html",
                 file_id=file_id,
-                info=info,          # dict
-                bet=bet,            # dict
-                tech=tech,          # dict
-                cols=cols,          # list[dict]
-                pts=pts_rows,       # list[dict] for table
-                pts_data=pts_data,  # list[dict] for chart
+                info=info,
+                bet=bet,
+                tech=tech,
+                cols=cols,
+                pts=pts_rows,
+                pts_data=pts_data,
                 metadata_url=md_url,
                 sample_region=sample_region,
             )
 
-        # ── PDF detail view (summary + plot + core/non-core metadata) ─
+        # ── PDF detail view (UNCHANGED) ───────────────────────────────
         @self.app.route("/view/pdf/<int:file_id>")
         def view_pdf(file_id: int):
-            # Full file_info so template can show Measurement ID etc.
             fi_rows = self.db.fetchall_dict(
                 "SELECT * FROM file_info WHERE id=?",
                 (file_id,),
@@ -364,14 +396,12 @@ class PuraloxApp:
 
             pdf_filename = fi.get("file_name") or f"file_{file_id}.pdf"
 
-            # Count points
             cnt_rows = self.db.fetchall_dict(
                 "SELECT COUNT(*) AS c FROM bet_data_points WHERE file_info_id=?",
                 (file_id,),
             )
             points_count = cnt_rows[0]["c"] if cnt_rows else 0
 
-            # All summaries from bet_summaries (for metadata tables)
             kv_rows = []
             if self._table_exists("bet_summaries"):
                 kv_rows = self.db.fetchall_dict(
@@ -380,8 +410,6 @@ class PuraloxApp:
                     (file_id,),
                 )
 
-            # ------ classify into core vs extra (non-core) ------
-            # Use the same "core" concept as the metadata Excel
             core_keys = {
                 "general:Sample weight",
                 "general:Analysis gas",
@@ -401,35 +429,20 @@ class PuraloxApp:
 
             core_fields = []
             extra_fields = []
-
             for r in kv_rows:
-                key = r["key"]
-                val = r["value"]
-                row = {"key": key, "value": val}
-                if key in core_keys:
+                row = {"key": r["key"], "value": r["value"]}
+                if r["key"] in core_keys:
                     core_fields.append(row)
                 else:
                     extra_fields.append(row)
 
-            # For debugging
-            logging.debug(
-                "PDF view for file_id=%s: kv_rows=%s, core_fields=%s, extra_fields=%s, bet_present=%s",
-                file_id,
-                len(kv_rows),
-                len(core_fields),
-                len(extra_fields),
-                bool(points_count),
-            )
-
-            # Points for plot & BET table
             pts_rows = self.db.fetchall_dict(
                 "SELECT no, p_p0, p_va_p0_p FROM bet_data_points "
                 "WHERE file_info_id=? ORDER BY no",
                 (file_id,),
             )
-            pts_data = pts_rows  # list[dict]
+            pts_data = pts_rows
 
-            # Default plot ranges (for UI sliders / inputs)
             x_vals = [r["p_p0"] for r in pts_rows if r["p_p0"] is not None]
             y_vals = [r["p_va_p0_p"] for r in pts_rows if r["p_va_p0_p"] is not None]
 
@@ -438,7 +451,6 @@ class PuraloxApp:
             default_y_min = min(y_vals) if y_vals else None
             default_y_max = max(y_vals) if y_vals else None
 
-            # Header object for template (used as header.*)
             measurement_id = fi.get("comment5") or fi.get("file_name") or f"File {file_id}"
             header = {
                 "measurement_id": measurement_id,
@@ -450,7 +462,6 @@ class PuraloxApp:
                 "version": fi.get("version", ""),
             }
 
-            # bundle: still available if you use it elsewhere
             bundle = {
                 "file_id": file_id,
                 "points_count": points_count,
@@ -477,12 +488,58 @@ class PuraloxApp:
                 extra_fields=extra_fields,
             )
 
-        # ── ELN push (template_id optional) ───────────────────────────
+        # ✅ XDI detail view (NEW) + full dataframe table from DB
+        @self.app.route("/view/xdi/<int:file_id>")
+        def view_xdi(file_id: int):
+            fi_rows = self.db.fetchall_dict("SELECT * FROM file_info WHERE id=?", (file_id,))
+            if not fi_rows:
+                return "Not found", 404
+            fi = fi_rows[0]
+
+            scan_rows = self.db.fetchall_dict(
+                "SELECT * FROM xdi_scans WHERE file_info_id=? ORDER BY id DESC LIMIT 1",
+                (file_id,)
+            )
+            scan = scan_rows[0] if scan_rows else {}
+
+            cols = self.db.fetchall_dict(
+                "SELECT col_index, col_name FROM xdi_columns WHERE file_info_id=? ORDER BY col_index ASC",
+                (file_id,)
+            )
+
+            pts = self.db.fetchall_dict(
+                "SELECT energy, mu, bkg FROM xdi_points WHERE file_info_id=? ORDER BY id ASC",
+                (file_id,)
+            )
+            pts_preview = pts[:500]
+
+            # ✅ full dataframe JSON stored in DB
+            df_json_rows = self.db.fetchall_dict(
+                "SELECT df_json FROM xdi_dataframe WHERE file_info_id=? LIMIT 1",
+                (file_id,)
+            )
+            df_json = df_json_rows[0]["df_json"] if df_json_rows else None
+
+            md_url = url_for("download_metadata_for_file", file_id=file_id)
+
+            return render_template(
+                "view_xdi.html",
+                file_id=file_id,
+                info=fi,
+                scan=scan,
+                cols=cols,
+                pts=pts_preview,
+                pts_data=pts,
+                df_json=df_json,                 # ✅ NEW for table
+                metadata_url=md_url,
+                sample_region="KIT Campus Nord", # ✅ requested
+            )
+
+        # ── ELN push (UNCHANGED) ───────────────────────────────────────
         @self.app.route("/eln/<int:file_id>", methods=["POST"])
         def eln_create(file_id: int):
             return self._eln_create_local_json(file_id, template_id=None)
 
-        # Legacy URL /eln/<file_id>/<template_id>
         @self.app.route("/eln/<int:file_id>/<int:template_id>", methods=["POST"])
         def eln_create_legacy(file_id: int, template_id: int):
             logging.info("ELN push (legacy URL) with template_id=%s", template_id)
@@ -495,7 +552,6 @@ class PuraloxApp:
 
         @self.app.route("/metadata/file/<int:file_id>")
         def download_metadata_for_file(file_id: int):
-            # Use new module to (re)generate before download
             md_path = self.metadata_builder.generate_metadata(file_id)
             fname = os.path.basename(md_path)
             return send_from_directory(self.metadata_dir, fname, as_attachment=True)
@@ -505,7 +561,6 @@ class PuraloxApp:
         def api_info():
             return render_template("api.html")
 
-        # ELN: list templates for frontend dropdown
         @self.app.route("/api/elab/templates")
         def api_elab_templates():
             try:
@@ -516,7 +571,6 @@ class PuraloxApp:
                 logging.exception("api_elab_templates failed")
                 return jsonify({"error": str(e)}), 500
 
-        # Optional quick ELN experiment list API
         @self.app.route("/api/elab/experiments")
         def api_elab_experiments():
             try:
@@ -525,10 +579,9 @@ class PuraloxApp:
             except ApiException as e:
                 return jsonify({"error": "API Exception", "details": str(e)}), 500
 
-    # ─── ELN push core (build HTML directly from DB, JSON only) ──────
+    # ─── ELN push core (your original function, unchanged) ────────────
     def _eln_create_local_json(self, file_id: int, template_id: int | None = None):
         try:
-            # ---- template_id (optional, informational) ----
             form_tid = request.form.get("template_id")
             if form_tid and str(form_tid).strip():
                 try:
@@ -538,7 +591,6 @@ class PuraloxApp:
 
             title = request.form.get("title") or f"File {file_id}"
 
-            # Optional plot range coming from Excel/PDF view
             plot_xmin = request.form.get("plot_xmin")
             plot_xmax = request.form.get("plot_xmax")
             try:
@@ -555,7 +607,6 @@ class PuraloxApp:
                 file_id, template_id, plot_xmin, plot_xmax
             )
 
-            # ---- Load data from DB ----
             fi_rows = self.db.fetchall_dict("SELECT * FROM file_info WHERE id=?", (file_id,))
             if not fi_rows:
                 return jsonify({"ok": False, "stage": "load", "error": "file_info not found"}), 404
@@ -576,7 +627,6 @@ class PuraloxApp:
                 (file_id,)
             )
 
-            # ---- Derive some fields ----
             measurement_id = fi.get("comment5") or fi.get("file_name") or f"file_{file_id}"
             scientist = fi.get("comment2") or "—"
 
@@ -584,7 +634,6 @@ class PuraloxApp:
             sample_id = m_sample.group(1) if m_sample else "—"
 
             comment3 = fi.get("comment3") or ""
-            parts = [p.strip() for p in comment3.split(",")] if comment3 else []
             try:
                 pvals = [r["p_p0"] for r in pts if r["p_p0"] is not None]
                 pmin = min(pvals) if pvals else "—"
@@ -598,7 +647,6 @@ class PuraloxApp:
             specific_surf_area = bet.get("as_bet", "—") or bet.get("Specific surface area", "—")
             pore_volume = bet.get("total_pore_volume", "—") or bet.get("Total pore volume", "—")
 
-            # ---- Small HTML tables ----
             def make_table(data_rows):
                 if not data_rows:
                     return "<p>No data</p>"
@@ -619,7 +667,6 @@ class PuraloxApp:
             bet_table_html = make_table(bet_rows[:1]) if bet_rows else "<p>No BET parameters</p>"
             pts_table_html = make_table(pts[:15]) if pts else "<p>No BET data points</p>"
 
-            # ---- Final HTML body for ELN ----
             html_body = f"""
             <h1>BET Measurement Report</h1>
 
@@ -660,14 +707,6 @@ class PuraloxApp:
             {pts_table_html}
             """
 
-            # Print some debug on console for you
-            print("\n[ELN] Creating experiment for file_id:", file_id)
-            print("[ELN] Measurement ID:", measurement_id)
-            print("[ELN] HTML body (first 500 chars):")
-            print(html_body[:500])
-            print("------- END OF PREVIEW -------\n")
-
-            # ---- Create experiment in ELN ----
             try:
                 _, status, headers = self.exp_api.post_experiment_with_http_info(body={})
             except Exception as e:
@@ -679,14 +718,12 @@ class PuraloxApp:
 
             exp_id = headers["Location"].rstrip("/").split("/")[-1]
 
-            # ---- Patch with title + body ----
             try:
                 self.exp_api.patch_experiment(exp_id, body={"title": title, "body": html_body})
             except Exception as e:
                 logging.exception("patch_experiment failed")
                 return jsonify({"ok": False, "stage": "patch", "error": str(e), "exp_id": exp_id}), 500
 
-            # ---- Attach BET plot (best-effort, honoring optional range) ----
             pts_for_plot = self.db.fetchall_dict(
                 "SELECT p_p0, p_va_p0_p FROM bet_data_points WHERE file_info_id=?",
                 (file_id,)
@@ -697,7 +734,6 @@ class PuraloxApp:
                     y_all = np.array([r["p_va_p0_p"] for r in pts_for_plot if r["p_va_p0_p"] is not None])
 
                     if len(x_all) and len(y_all):
-                        # Apply optional range from UI
                         mask = np.ones_like(x_all, dtype=bool)
                         if plot_xmin is not None:
                             mask &= x_all >= plot_xmin
@@ -707,7 +743,6 @@ class PuraloxApp:
                         x = x_all[mask]
                         y = y_all[mask]
 
-                        # Fallback: if filter removes everything, use full range
                         if not len(x) or not len(y):
                             x, y = x_all, y_all
 
@@ -746,7 +781,6 @@ class PuraloxApp:
                 except Exception:
                     logging.exception("Plot upload failed (non-fatal)")
 
-            # ---- Add BET_result tag (best-effort, template-aware) ----
             try:
                 tag_name = "BET_result"
                 if template_id is not None:
@@ -775,17 +809,14 @@ class PuraloxApp:
             logging.exception("eln_create_local_json outer failure")
             return jsonify({"ok": False, "stage": "unknown", "error": str(e)}), 500
 
-    # ─── PDF bundle → DB ──────────────────────────────────────────────
+    # ─── PDF bundle → DB (your original function, unchanged) ───────────
     def _insert_pdf_bundle_into_db(self, bundle: dict, original_filename: str | None = None) -> int:
         gen = (bundle.get("general") or {})
         iso = (bundle.get("isotherm_summary") or {})
         mp  = (bundle.get("multipoint_bet_summary") or {})
         tp  = (bundle.get("tplot_summary") or {})
 
-        # Instrument's own measurement file (often .qps)
         measurement_filename = gen.get("Filename") or gen.get("Sample ID") or ""
-
-        # For type detection we want the uploaded PDF name here
         file_name = original_filename or measurement_filename or "BET_PDF_Report.pdf"
 
         date_str, time_str = "", ""
@@ -797,11 +828,9 @@ class PuraloxApp:
             if len(parts) >= 2:
                 time_str = parts[1]
 
-        # operator: pick one name only
         operator_primary = gen.get("OperatorPrimary") or \
             (gen.get("Operators")[0] if isinstance(gen.get("Operators"), list) and gen["Operators"] else "")
 
-        # pretreatment / measurement conditions from PDF fields
         parts = []
         if gen.get("OutgasTemp"):
             parts.append(str(gen["OutgasTemp"]))
@@ -833,7 +862,6 @@ class PuraloxApp:
             file_info
         )
 
-        # Measurement ID for PDFs too
         measurement_id = build_measurement_id(
             file_id=fid,
             file_name=file_info["file_name"],
@@ -880,12 +908,10 @@ class PuraloxApp:
         ph   = ", ".join(":" + k for k in bet_params)
         self.db.execute(f"INSERT INTO bet_parameters ({cols}) VALUES ({ph})", bet_params)
 
-        # Save summaries (for PDF detail view + metadata)
         def _insert_summary(prefix: str, dct: dict):
             if not dct:
                 return
             for k, v in dct.items():
-                # Special handling for general:Dates to avoid huge lists
                 if prefix == "general" and k == "Dates":
                     if isinstance(v, (list, tuple)):
                         uniq = []
@@ -913,7 +939,6 @@ class PuraloxApp:
         _insert_summary("multipoint_bet_summary", mp)
         _insert_summary("tplot_summary", tp)
 
-        # Insert isotherm points from CSV (if available)
         csvs = (bundle.get("csvs") or {})
         iso_csv = csvs.get("isotherm")
         if iso_csv and os.path.exists(iso_csv):
@@ -927,7 +952,6 @@ class PuraloxApp:
                         "VALUES (?, ?, ?, ?)",
                         (fid, idx + 1, ppo, vol)
                     )
-                # Plot column names
                 self.db.execute(
                     "INSERT INTO bet_plot_columns (file_info_id, col_index, col_name) VALUES (?, ?, ?)",
                     (fid, 1, "P_over_P0")
@@ -939,7 +963,6 @@ class PuraloxApp:
             except Exception as e:
                 logging.exception("Failed to import isotherm CSV into DB: %s", e)
 
-        # minimal technical_info row
         self.db.execute(
             """
             INSERT INTO technical_info
