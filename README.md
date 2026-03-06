@@ -19,20 +19,99 @@ Puralox is a laboratory automation platform built with Flask. Specialized in BET
 
 ---
 
-## 🛠️ Architecture Overview
 
-The system follows a clean, decoupled design where data extraction (the "Parsers") is separated from data storage and business logic (the "Processors").
+---
+
+## 🛠️ Architecture & Design
+
+Puralox follows a decoupled, service-oriented architecture. Data extraction is handled by dedicated parsers, while business logic and database persistence are managed by processors.
+
+### Class Diagram (Mermaid)
+
+```mermaid
+classDiagram
+    direction TB
+
+    class PuraloxApp {
+        +Flask app
+        +DatabaseManager db
+        +ExcelProcessor processor
+        +PdfProcessor pdf_processor
+        +TemplateProcessor template_processor
+        +MetadataBuilder metadata_builder
+        +ElnClient eln_client
+        +run()
+    }
+
+    class DatabaseManager {
+        +str db_path
+        +fetchall_dict(sql, params) list
+        +fetchone_dict(sql, params) dict
+        +execute(sql, params) int
+        +executemany(sql, seq) int
+        +table_exists(name) bool
+    }
+
+    class BaseImporter {
+        <<abstract>>
+        +import_file(path, name)* int
+    }
+
+    class ExcelProcessor {
+        +DatabaseManager db
+        +import_file(path, name) int
+    }
+
+    class PdfProcessor {
+        +DatabaseManager db
+        +import_file(path, name) int
+    }
+
+    class BetPdfParser {
+        +parse(pdf_source)$ dict
+        +parse_general(text)$ dict
+    }
+
+    class ElnClient {
+        +str base_url
+        +create_experiment(title, body) str
+        +upload_plot(exp_id, file_id, ...)
+    }
+
+    class MeasurementIdBuilder {
+        +build(file_id, name, ...)$ str
+    }
+
+    %% Inheritance
+    ExcelProcessor --|> BaseImporter : extends
+    PdfProcessor   --|> BaseImporter : extends
+
+    %% Composition
+    PuraloxApp *-- DatabaseManager
+    PuraloxApp *-- ExcelProcessor
+    PuraloxApp *-- PdfProcessor
+    PuraloxApp *-- TemplateProcessor
+    PuraloxApp *-- MetadataBuilder
+    PuraloxApp *-- ElnClient
+
+    %% Usage
+    ExcelProcessor --> DatabaseManager
+    PdfProcessor   --> DatabaseManager
+    PdfProcessor   ..> BetPdfParser : uses
+    ExcelProcessor ..> MeasurementIdBuilder : calls
+    PdfProcessor   ..> MeasurementIdBuilder : calls
+```
+
+### Component Breakdown
 
 - **`PuraloxApp`**: Main Flask orchestrator and router.
 - **`DatabaseManager`**: Centralized SQLite interaction layer.
 - **`ElnClient`**: Dedicated wrapper for the eLabFTW API.
-- **`BetPdfParser`**: specialized parser for scientific PDF reports.
-- **`ExcelProcessor` & `PdfProcessor`**: Specialized importers that handle database persistence for their respective formats, both inheriting from `BaseImporter`.
-- **`MeasurementIdBuilder`**: Centralized logic for generating consistent measurement IDs across all file types.
-- **`TemplateProcessor`**: Logic for generating the rich ELN HTML content from database records.
+- **`BetPdfParser`**: Specialized logic for scientific PDF extraction (PyMuPDF).
+- **`ExcelProcessor` & `PdfProcessor`**: Specialized importers that handle database persistence, both inheriting from **`BaseImporter`**.
+- **`MeasurementIdBuilder`**: Centralized logic for generating consistent measurement IDs.
+- **`TemplateProcessor`**: Logic for generating the rich ELN HTML summary.
 - **`MetadataBuilder`**: Generates metadata Excel sheets for experiment documentation.
-
-*View the full class relationship at: `brain/46c08c34-03d2-4bc3-ae45-9d0e3e026e67/class_diagram.drawio`*
 
 ---
 
