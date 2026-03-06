@@ -2,29 +2,46 @@
 
 Puralox is a laboratory automation platform built with Flask. Specialized in BET analysis processing, it automates the extraction, storage, visualization, and synchronization of data across two primary instrument outputs: Excel reports and BET PDF reports.
 
-## 🚀 Core Features
+---
 
-- **Automated BET Data Extraction**
-  - **Excel Parsing:** Extracts metadata (Sample ID, Operator, etc.), BET calculation parameters, technical info, and isotherm data points from `.xlsx` files.
-  - **PDF Parsing (New):** Uses `PyMuPDF` (`fitz`) to extract comprehensive data from BET instrument PDF reports, including isotope summaries, multi-point BET results, t-plots, and BJH desorption tables.
-- **Scientific Visualization**
-  - Generates isotherm plots, t-plots, and BJH pore size distribution plots using `matplotlib`.
-  - Detailed web UI to inspect every data point with `DataTables`.
-- **eLabFTW Synchronization**
-  - Full v2 API integration using `ElnClient`.
-  - Creates experiments, patches rich-text summaries (ELN HTML), attaches generated PDF reports, and applies relevant tags (e.g., `BET_result`).
-- **Clean Architecture**
-  - 1:1 mapping between classes and modules for maximum maintainability.
-  - Solid technical foundation with a clear UML class diagram.
+## 📋 Table of Contents
+
+1. [Features](#🚀-core-features)
+2. [Architecture & Design](#🛠️-architecture--design)
+3. [Prerequisites](#🔧-prerequisites)
+4. [eLabFTW Installation & Docker-Compose](#🖥️-elabftw-installation--docker-compose)
+5. [Installation & Setup](#⚙️-installation--setup)
+6. [Project Structure](#📂-project-structure)
+7. [Excel Input Format](#📊-excel-input-format)
+8. [Running Locally](#▶️-how-to-run)
+9. [Web UI Walkthrough](#🌐-web-ui-walkthrough)
+10. [API Endpoints](#🔌-api-endpoints)
+11. [Configuration Reference](#🔧-configuration-reference)
+12. [Database Schema](#🗄️-database-schema)
+13. [Customization & Extension](#🔨-customization--extension)
+14. [Troubleshooting & FAQs](#❓-troubleshooting--faqs)
+15. [Contributing](#🤝-contributing)
+16. [License](#📜-license)
 
 ---
 
+## 🚀 Core Features
+
+- **Automated BET Data Extraction**
+  - **Excel Parsing:** Extracts metadata, BET parameters, and isotherm data points from `.xlsx` files.
+  - **PDF Parsing (New):** Extracts comprehensive data from instrument PDF reports using `PyMuPDF`.
+- **Scientific Visualization**
+  - Generates isotherm, t-plot, and BJH plots using `matplotlib`.
+  - Detailed web UI with `DataTables` integration.
+- **eLabFTW Synchronization**
+  - Full v2 API integration using `ElnClient`.
+  - Rich-text summaries, PDF attachments, and auto-tagging.
 
 ---
 
 ## 🛠️ Architecture & Design
 
-Puralox follows a decoupled, service-oriented architecture. Data extraction is handled by dedicated parsers, while business logic and database persistence are managed by processors.
+Puralox follows a decoupled, service-oriented architecture with a 1:1 mapping between classes and modules for maximum maintainability.
 
 ### Class Diagram (Mermaid)
 
@@ -107,109 +124,156 @@ classDiagram
 - **`PuraloxApp`**: Main Flask orchestrator and router.
 - **`DatabaseManager`**: Centralized SQLite interaction layer.
 - **`ElnClient`**: Dedicated wrapper for the eLabFTW API.
-- **`BetPdfParser`**: Specialized logic for scientific PDF extraction (PyMuPDF).
-- **`ExcelProcessor` & `PdfProcessor`**: Specialized importers that handle database persistence, both inheriting from **`BaseImporter`**.
-- **`MeasurementIdBuilder`**: Centralized logic for generating consistent measurement IDs.
-- **`TemplateProcessor`**: Logic for generating the rich ELN HTML summary.
-- **`MetadataBuilder`**: Generates metadata Excel sheets for experiment documentation.
+- **`BetPdfParser`**: Specialized scientific PDF extraction logic.
+- **`ExcelProcessor` & `PdfProcessor`**: Importers inheriting from **`BaseImporter`**.
+- **`MeasurementIdBuilder`**: Logic for consistent measurement IDs.
+- **`TemplateProcessor`**: Generates rich ELN HTML summaries.
+- **`MetadataBuilder`**: Generates metadata Excel sheets.
 
 ---
 
-## 📂 Project Structure
+## 🔧 Prerequisites
 
-```text
-puralox-app/
-├── puralox/
-│   ├── app.py                  # PuraloxApp (Routes & Logic)
-│   ├── base_importer.py        # Abstract Base Class for file importers
-│   ├── bet_pdf_parser.py       # BetPdfParser (PDF Parsing Logic)
-│   ├── config.py               # Configuration & Environment loading
-│   ├── database_manager.py     # DatabaseManager (SQLite helper)
-│   ├── eln_client.py           # ElnClient (eLabFTW API operations)
-│   ├── excel_processor.py      # ExcelProcessor (Excel → DB)
-│   ├── measurement_id_builder.py# MeasurementIdBuilder (ID Generation)
-│   ├── metadata_builder.py     # MetadataBuilder (.xlsx metadata gen)
-│   ├── pdf_processor.py        # PdfProcessor (PDF → DB orchestration)
-│   ├── template_processor.py   # TemplateProcessor (ELN HTML gen)
-│   ├── static/                 # CSS/JS assets
-│   └── templates/              # Jinja2 HTML views
-├── uploads/                    # Writable folder for storage
-├── run.py                      # Application entry point
-├── .env                        # Local configuration (Ignored by Git)
-├── .gitignore                  # Git exclusion rules
-└── README.md                   # ← You are here
+- **Python 3.10+**
+- **PyMuPDF (`fitz`)**, **Pandas**, **Matplotlib**
+- **SQLite3**
+- **eLabFTW** server (v2 API) & personal access token
+
+---
+
+## 🖥️ eLabFTW Installation & Docker-Compose
+
+Official `docker-compose.yml` snippet for eLabFTW:
+
+```yaml
+services:
+  web:
+    image: elabftw/elabimg:stable
+    container_name: elabftw
+    restart: always
+    environment:
+      - SITE_URL=https://localhost
+      - DISABLE_HTTPS=false
+    ports:
+      - '443:443'
+    networks:
+      - elabftw-net
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    environment:
+      - MYSQL_DATABASE=elabftw
+      - MYSQL_USER=elabftw
+      - MYSQL_PASSWORD=your_password
+    networks:
+      - elabftw-net
+
+networks:
+  elabftw-net:
 ```
 
 ---
 
 ## ⚙️ Installation & Setup
 
-### 1. Prerequisites
-- **Python 3.10+**
-- **PyMuPDF (`fitz`)**: For scientific PDF parsing.
-- **SQLite3**
-
-### 2. Setup environment
 ```bash
 git clone https://github.com/vitalybin/BET-Automation.git
 cd BET-Automation
 python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. Requirements
-The platform requires the following core dependencies:
-- `Flask`, `python-dotenv`
-- `pandas`, `numpy`, `matplotlib`
-- `requests`, `elabapi-python`
-- `PyMuPDF` (installed as `pymupdf` or `fitz`)
-- `python-docx`, `python-docx` (for DOCX export support)
+---
+
+## 📂 Project Structure
+
+```text
+puralox/
+├── app.py                  # PuraloxApp Class
+├── base_importer.py        # BaseImporter Class
+├── database_manager.py     # DatabaseManager Class
+├── excel_processor.py      # ExcelProcessor Class
+├── pdf_processor.py        # PdfProcessor Class
+├── bet_pdf_parser.py       # BetPdfParser Class
+├── eln_client.py           # ElnClient Class
+├── measurement_id_builder.py# MeasurementIdBuilder Class
+├── metadata_builder.py     # MetadataBuilder Class
+├── template_processor.py   # TemplateProcessor Class
+├── config.py               # Config & Env
+├── static/                 # Assets
+└── templates/              # HTML Views
+```
 
 ---
 
-## 🖥️ Configuration
+## 📊 Excel Input Format
 
-Create a `.env` file in the root directory:
+Your Excel must have a sheet named **BET** with:
 
-```env
-UPLOAD_FOLDER=./uploads
-DB_NAME=puralox.db
-ELABFTW_URL=https://your-elab-instance.com/api/v2
-ELABFTW_TOKEN=your_v2_personal_access_token
-ELABFTW_DISABLE_SSL=true  # Set to false for production
-```
+| Field | Cell |
+|-------|------|
+| file_name | C2 |
+| date_of_measurement | C3 |
+| time_of_measurement | C4 |
+| comment4 (equipment) | C8 |
+| serial_number | C9 |
 
 ---
 
 ## ▶️ How to Run
 
-### Local Development
+### Command Line
 ```bash
 python run.py
 ```
-The application will start on `http://127.0.0.1:2200` by default.
+Default: `http://localhost:2200`
+
+---
+
+## 🔌 API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | Upload form |
+| GET | `/files` | List processed files |
+| POST | `/push/<id>` | Push to eLabFTW |
+| GET | `/api/data/<id>`| Raw JSON data |
+
+---
+
+## 🔧 Configuration Reference
+
+| Variable | Purpose |
+|----------|---------|
+| `ELABFTW_URL` | eLabFTW API base URL |
+| `ELABFTW_TOKEN` | Personal access token |
+| `DB_NAME` | SQLite DB filename |
 
 ---
 
 ## 🗄️ Database Schema
 
-Puralox maintains structured records for scientific analysis:
-- **`file_info`**: Core metadata, ID tracking, and comments.
-- **`bet_parameters`**: Scientific parameters like sample weight and specific constants.
-- **`technical_info`**: Detailed instrument technical parameters.
-- **`bet_summaries`**: Key-value data summaries for experiments.
-- **`bet_data_points`**: Raw (P/P₀, Volume) pairs for isotherm plotting.
+- **`file_info`**: Core metadata.
+- **`bet_parameters`**: Scientific parameters.
+- **`technical_info`**: Instrument technical data.
+- **`bet_data_points`**: Raw isotherm data points.
 
 ---
 
-## 🤝 Contributing
-1. Feature branch: `git checkout -b feature/name`
-2. Commit: Always include a descriptive message.
-3. Push to `Dev-C` or your relevant branch.
-4. Open a Pull Request.
+## ❓ Troubleshooting & FAQs
+
+- **SSL errors**: Set `ELABFTW_DISABLE_SSL=true` in `.env`.
+- **Permission denied**: Check `uploads/` folder permissions.
 
 ---
 
-**KIT — Karlsruhe Institute of Technology**  
+## 📜 License
+
+All rights of Code and Development belong to KIT (Karlsruhe Institute of Technology).
+
+---
+
 *Development and logic by Rachit Jain (`rachitjain24`)*
