@@ -4,10 +4,10 @@ import re
 import logging
 import pandas as pd
 
-from .db_manager import DatabaseManager
-from .bet_integration import extract_all_with_prints
-from .nomenclature import build_measurement_id
-from .excel_processor import BaseImporter
+from .database_manager import DatabaseManager
+from .bet_pdf_parser import extract_all_with_prints
+from .measurement_id_builder import build_measurement_id
+from .base_importer import BaseImporter
 
 
 class PdfProcessor(BaseImporter):

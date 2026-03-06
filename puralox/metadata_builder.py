@@ -22,20 +22,12 @@ class MetadataBuilder:
         self.metadata_dir = metadata_dir
         os.makedirs(self.metadata_dir, exist_ok=True)
 
-    # local helper; independent of PuraloxApp._table_exists
-    def _table_exists(self, name: str) -> bool:
-        rows = self.db.fetchall_dict(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (name,)
-        )
-        return bool(rows)
-
     def _summary_map(self, file_id: int) -> dict:
         """
         Return a dict { key -> value } of all entries from bet_summaries
         for the given file_id.
         """
-        if not self._table_exists("bet_summaries"):
+        if not self.db.table_exists("bet_summaries"):
             return {}
         rows = self.db.fetchall_dict(
             "SELECT key, value FROM bet_summaries WHERE file_info_id=?",

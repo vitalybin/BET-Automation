@@ -1,0 +1,15 @@
+# puralox/.gitignore
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+*.db
+uploads/
+bet_out/
+brain/
+*.log
+.gemini/
+.agents/
+.agent/
+_agents/
+_agent/

@@ -89,6 +89,17 @@ class DatabaseManager:
         # execute() already returns lastrowid for INSERTs.
         return self.execute(sql, params)
 
+    # -----------------------------
+    # Schema helpers
+    # -----------------------------
+    def table_exists(self, name: str) -> bool:
+        """Return True if a table with the given name exists in the database."""
+        rows = self.fetchall_dict(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (name,)
+        )
+        return bool(rows)
+
     def executemany(self, sql, seq_of_params):
         conn = self.connect()
         try:

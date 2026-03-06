@@ -1,20 +1,8 @@
 import pandas as pd
-from abc import ABC, abstractmethod
 from typing import Optional
 
-from .nomenclature import build_measurement_id
-
-
-class BaseImporter(ABC):
-    """
-    Abstract importer contract so Excel + PDF share a single interface.
-    This is what gives you real UML inheritance (generalization).
-    """
-
-    @abstractmethod
-    def import_file(self, path: str, original_filename: Optional[str] = None) -> int:
-        """Import file into DB and return file_info_id."""
-        raise NotImplementedError
+from .base_importer import BaseImporter
+from .measurement_id_builder import build_measurement_id
 
 
 class ExcelProcessor(BaseImporter):

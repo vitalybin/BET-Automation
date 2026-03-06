@@ -2,7 +2,7 @@
 import re
 from jinja2 import Template
 
-from .db_manager import DatabaseManager
+from .database_manager import DatabaseManager
 from .config import DB_NAME
 
 
