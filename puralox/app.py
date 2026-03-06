@@ -6,7 +6,6 @@ import re
 import time
 import logging
 import warnings
-import sqlite3
 from io import BytesIO
 
 import numpy as np
@@ -29,8 +28,10 @@ from reportlab.platypus import SimpleDocTemplate, Image as RLImage
 from .config import UPLOAD_FOLDER, DB_NAME
 from .db_manager import DatabaseManager
 from .excel_processor import ExcelProcessor
-from .bet_integration import extract_all_with_prints
+from .pdf_processor import PdfProcessor
+from .template_processor import TemplateProcessor
 from .nomenclature import build_measurement_id
+from .metadata_builder import MetadataBuilder   # <— separate module for metadata Excel
 import requests
 
 # ─── CONFIG ────────────────────────────────────────────────────────────
@@ -67,6 +68,15 @@ class PuraloxApp:
 
         self.db        = DatabaseManager(DB_NAME)
         self.processor = ExcelProcessor(self.db)
+
+        # Importers (inheritance: BaseImporter -> ExcelProcessor, PdfProcessor)
+        self.pdf_processor = PdfProcessor(self.db, self.app.config["UPLOAD_FOLDER"])
+
+        # Template builder used by ELN push (so UML matches runtime)
+        self.template_processor = TemplateProcessor(self.db)
+
+        # NEW: dedicated builder for metadata Excel
+        self.metadata_builder = MetadataBuilder(self.db, self.metadata_dir)
 
         self._ensure_optional_tables()
         self._configure_elabftw()
@@ -135,7 +145,7 @@ class PuraloxApp:
         try:
             rows = self.db.fetchall_dict(
                 "SELECT * FROM file_info WHERE id=?",
-                (file_id,)
+                (file_id,),
             )
             if not rows:
                 return
@@ -229,29 +239,19 @@ class PuraloxApp:
                 ext = os.path.splitext(f.filename)[1].lower()
                 try:
                     if ext in (".xlsx", ".xls"):
-                        # Existing Excel import flow
-                        new_file_id = self.processor.process_file(dst)
-                        # set Measurement ID for Excel
-                        self._set_measurement_id_for_file(new_file_id)
+                        # Excel import (via common BaseImporter interface)
+                        new_file_id = self.processor.import_file(dst, original_filename=f.filename)
 
                     elif ext == ".pdf":
-                        # PDF → parse → DB
-                        out_dir = os.path.join(self.app.config["UPLOAD_FOLDER"], "pdf_out")
-                        os.makedirs(out_dir, exist_ok=True)
-                        bundle = extract_all_with_prints(dst, out_dir)
-
-                        # Pass uploaded filename so type detection works
-                        new_file_id = self._insert_pdf_bundle_into_db(
-                            bundle,
-                            original_filename=f.filename
-                        )
+                        # PDF import (via PdfProcessor)
+                        new_file_id = self.pdf_processor.import_file(dst, original_filename=f.filename)
 
                     else:
                         return "Unsupported file type. Upload .xlsx or .pdf", 400
 
-                    # Create unified metadata for both Excel + PDF
+                    # Create unified metadata for both Excel + PDF (via separate module)
                     try:
-                        self._generate_metadata(new_file_id)
+                        self.metadata_builder.generate_metadata(new_file_id)
                     except Exception:
                         logging.exception("metadata generation failed")
 
@@ -301,87 +301,177 @@ class PuraloxApp:
         # ── Excel detail view ─────────────────────────────────────────
         @self.app.route("/view/excel/<int:file_id>")
         def view_excel(file_id: int):
+            # Load DB rows into DataFrames
             to_df = lambda q: pd.DataFrame(self.db.fetchall_dict(q))
-            info = to_df(f"SELECT * FROM file_info WHERE id={file_id}")
-            bet  = to_df(f"SELECT * FROM bet_parameters WHERE file_info_id={file_id}")
-            tech = to_df(f"SELECT * FROM technical_info WHERE file_info_id={file_id}")
-            cols = to_df(f"SELECT * FROM bet_plot_columns WHERE file_info_id={file_id}")
-            pts  = to_df(f"SELECT * FROM bet_data_points WHERE file_info_id={file_id}")
 
-            # For interactive plot in template
+            info_df = to_df(f"SELECT * FROM file_info WHERE id={file_id}")
+            bet_df  = to_df(f"SELECT * FROM bet_parameters WHERE file_info_id={file_id}")
+            tech_df = to_df(f"SELECT * FROM technical_info WHERE file_info_id={file_id}")
+            cols_df = to_df(f"SELECT * FROM bet_plot_columns WHERE file_info_id={file_id}")
+            pts_df  = to_df(f"SELECT * FROM bet_data_points WHERE file_info_id={file_id}")
+
+            # Convert to plain dicts / list-of-dicts for Jinja
+            info = info_df.iloc[0].to_dict() if not info_df.empty else {}
+            bet  = bet_df.iloc[0].to_dict() if not bet_df.empty else {}
+            tech = tech_df.iloc[0].to_dict() if not tech_df.empty else {}
+            cols = cols_df.to_dict(orient="records") if not cols_df.empty else []
+            pts_rows = pts_df.to_dict(orient="records") if not pts_df.empty else []
+
+            # For interactive plot in template (clean, sorted)
             pts_data = []
-            if pts is not None and not pts.empty:
-                pts_sorted = pts.sort_values("no")
-                pts_data = pts_sorted[["no", "p_p0", "p_va_p0_p"]].to_dict(orient="records")
+            if pts_rows:
+                pts_sorted = sorted(
+                    pts_rows,
+                    key=lambda r: r.get("no") if r.get("no") is not None else 0
+                )
+                pts_data = [
+                    {
+                        "no": r.get("no"),
+                        "p_p0": r.get("p_p0"),
+                        "p_va_p0_p": r.get("p_va_p0_p"),
+                    }
+                    for r in pts_sorted
+                ]
 
             md_url = url_for("download_metadata_for_file", file_id=file_id)
+            sample_region = "KIT Campus South"  # Excel = South
+
             return render_template(
                 "view_excel.html",
                 file_id=file_id,
-                info=info,
-                bet=bet,
-                tech=tech,
-                cols=cols,
-                pts=pts,
-                pts_data=pts_data,
-                metadata_url=md_url
+                info=info,          # dict
+                bet=bet,            # dict
+                tech=tech,          # dict
+                cols=cols,          # list[dict]
+                pts=pts_rows,       # list[dict] for table
+                pts_data=pts_data,  # list[dict] for chart
+                metadata_url=md_url,
+                sample_region=sample_region,
             )
 
-        # ── PDF detail view (summary) ─────────────────────────────────
+        # ── PDF detail view (summary + plot + core/non-core metadata) ─
         @self.app.route("/view/pdf/<int:file_id>")
         def view_pdf(file_id: int):
-            # full file_info so template can show Sample date, conditions, etc.
+            # Full file_info so template can show Measurement ID etc.
             fi_rows = self.db.fetchall_dict(
                 "SELECT * FROM file_info WHERE id=?",
-                (file_id,)
+                (file_id,),
             )
             fi = fi_rows[0] if fi_rows else {}
 
             pdf_filename = fi.get("file_name") or f"file_{file_id}.pdf"
 
+            # Count points
             cnt_rows = self.db.fetchall_dict(
                 "SELECT COUNT(*) AS c FROM bet_data_points WHERE file_info_id=?",
-                (file_id,)
+                (file_id,),
             )
             points_count = cnt_rows[0]["c"] if cnt_rows else 0
 
-            # Only show BET / t-plot summaries (hide noisy general:* like general:Dates)
-            summaries = []
+            # All summaries from bet_summaries (for metadata tables)
+            kv_rows = []
             if self._table_exists("bet_summaries"):
                 kv_rows = self.db.fetchall_dict(
-                    "SELECT key, value FROM bet_summaries WHERE file_info_id=? ORDER BY key",
-                    (file_id,)
+                    "SELECT key, value FROM bet_summaries "
+                    "WHERE file_info_id=? ORDER BY key",
+                    (file_id,),
                 )
-                for r in kv_rows:
-                    key = r["key"]
-                    if not (
-                        key.startswith("isotherm_summary")
-                        or key.startswith("multipoint_bet_summary")
-                        or key.startswith("tplot_summary")
-                    ):
-                        continue
-                    summaries.append({"key": key, "value": r["value"]})
 
-            # Load points for interactive plot
+            # ------ classify into core vs extra (non-core) ------
+            # Use the same "core" concept as the metadata Excel
+            core_keys = {
+                "general:Sample weight",
+                "general:Analysis gas",
+                "general:Bath Temp",
+                "general:OutgasTemp",
+                "multipoint_bet_summary:Surface Area",
+                "isotherm_summary:Surface Area",
+                "isotherm_summary: Surface Area",
+                "tplot_summary:Pore Volume",
+                "tplot_summary: Pore Volume",
+                "tplot_summary:Pore Diameter Dv(d)",
+                "tplot_summary: Pore Diameter Dv(d)",
+                "general:OperatorPrimary",
+                "general:Operators",
+                "general:Instrument",
+            }
+
+            core_fields = []
+            extra_fields = []
+
+            for r in kv_rows:
+                key = r["key"]
+                val = r["value"]
+                row = {"key": key, "value": val}
+                if key in core_keys:
+                    core_fields.append(row)
+                else:
+                    extra_fields.append(row)
+
+            # For debugging
+            logging.debug(
+                "PDF view for file_id=%s: kv_rows=%s, core_fields=%s, extra_fields=%s, bet_present=%s",
+                file_id,
+                len(kv_rows),
+                len(core_fields),
+                len(extra_fields),
+                bool(points_count),
+            )
+
+            # Points for plot & BET table
             pts_rows = self.db.fetchall_dict(
-                "SELECT no, p_p0, p_va_p0_p FROM bet_data_points WHERE file_info_id=? ORDER BY no",
-                (file_id,)
+                "SELECT no, p_p0, p_va_p0_p FROM bet_data_points "
+                "WHERE file_info_id=? ORDER BY no",
+                (file_id,),
             )
             pts_data = pts_rows  # list[dict]
 
+            # Default plot ranges (for UI sliders / inputs)
+            x_vals = [r["p_p0"] for r in pts_rows if r["p_p0"] is not None]
+            y_vals = [r["p_va_p0_p"] for r in pts_rows if r["p_va_p0_p"] is not None]
+
+            default_x_min = min(x_vals) if x_vals else None
+            default_x_max = max(x_vals) if x_vals else None
+            default_y_min = min(y_vals) if y_vals else None
+            default_y_max = max(y_vals) if y_vals else None
+
+            # Header object for template (used as header.*)
+            measurement_id = fi.get("comment5") or fi.get("file_name") or f"File {file_id}"
+            header = {
+                "measurement_id": measurement_id,
+                "date": fi.get("date_of_measurement", ""),
+                "time": fi.get("time_of_measurement", ""),
+                "operator": fi.get("comment2", ""),
+                "instrument": fi.get("comment4", ""),
+                "serial_number": fi.get("serial_number", ""),
+                "version": fi.get("version", ""),
+            }
+
+            # bundle: still available if you use it elsewhere
             bundle = {
                 "file_id": file_id,
                 "points_count": points_count,
-                "summaries": summaries
+                "summaries": [{"key": r["key"], "value": r["value"]} for r in kv_rows],
             }
+
             md_url = url_for("download_metadata_for_file", file_id=file_id)
+            sample_region = "KIT Campus Nord"  # PDF = North
+
             return render_template(
                 "view_pdf_extract.html",
                 pdf_filename=pdf_filename,
+                header=header,
                 bundle=bundle,
                 file_info=fi,
                 pts_data=pts_data,
-                metadata_url=md_url
+                metadata_url=md_url,
+                sample_region=sample_region,
+                default_x_min=default_x_min,
+                default_x_max=default_x_max,
+                default_y_min=default_y_min,
+                default_y_max=default_y_max,
+                core_fields=core_fields,
+                extra_fields=extra_fields,
             )
 
         # ── ELN push (template_id optional) ───────────────────────────
@@ -402,7 +492,8 @@ class PuraloxApp:
 
         @self.app.route("/metadata/file/<int:file_id>")
         def download_metadata_for_file(file_id: int):
-            md_path = self._generate_metadata(file_id)
+            # Use new module to (re)generate before download
+            md_path = self.metadata_builder.generate_metadata(file_id)
             fname = os.path.basename(md_path)
             return send_from_directory(self.metadata_dir, fname, as_attachment=True)
 
@@ -442,12 +533,24 @@ class PuraloxApp:
                 except ValueError:
                     pass
 
-            logging.info(
-                "ELN push for file_id=%s with template_id=%s (currently ignored for content)",
-                file_id, template_id
-            )
-
             title = request.form.get("title") or f"File {file_id}"
+
+            # Optional plot range coming from Excel/PDF view
+            plot_xmin = request.form.get("plot_xmin")
+            plot_xmax = request.form.get("plot_xmax")
+            try:
+                plot_xmin = float(plot_xmin) if plot_xmin not in (None, "", "null") else None
+            except ValueError:
+                plot_xmin = None
+            try:
+                plot_xmax = float(plot_xmax) if plot_xmax not in (None, "", "null") else None
+            except ValueError:
+                plot_xmax = None
+
+            logging.info(
+                "ELN push for file_id=%s with template_id=%s (range: %s – %s)",
+                file_id, template_id, plot_xmin, plot_xmax
+            )
 
             # ---- Load data from DB ----
             fi_rows = self.db.fetchall_dict("SELECT * FROM file_info WHERE id=?", (file_id,))
@@ -470,93 +573,24 @@ class PuraloxApp:
                 (file_id,)
             )
 
-            # ---- Derive some fields ----
-            measurement_id = fi.get("comment5") or fi.get("file_name") or f"file_{file_id}"
-            scientist = fi.get("comment2") or "—"
+            # ---- Build ELN HTML (moved into TemplateProcessor) ----
+            html_body = self.template_processor.build_eln_html(file_id)
 
-            m_sample = re.search(r"(\d{4}-\d{4})", measurement_id)
-            sample_id = m_sample.group(1) if m_sample else "—"
+            # Print some debug on console for you
+            measurement_id = (fi.get("comment5") or fi.get("file_name") or f"file_{file_id}")
+            print("\n[ELN] Creating experiment for file_id:", file_id)
+            print("[ELN] Measurement ID:", measurement_id)
+            print("[ELN] HTML body (first 500 chars):")
+            print(html_body[:500])
+            print("------- END OF PREVIEW -------\n")
 
-            comment3 = fi.get("comment3") or ""
-            parts = [p.strip() for p in comment3.split(",")] if comment3 else []
-            temp = parts[0] if len(parts) > 0 else "—"
-            duration = parts[1] if len(parts) > 1 else "—"
-            env = parts[2] if len(parts) > 2 else "—"
 
-            try:
-                pvals = [r["p_p0"] for r in pts if r["p_p0"] is not None]
-                pmin = min(pvals) if pvals else "—"
-                pmax = max(pvals) if pvals else "—"
-            except Exception:
-                pmin = pmax = "—"
-
-            mass = tech.get("mass", "—")
-            internal_device_id = tech.get("internal_device_id", "—")
-
-            specific_surf_area = bet.get("as_bet", "—") or bet.get("Specific surface area", "—")
-            pore_volume = bet.get("total_pore_volume", "—") or bet.get("Total pore volume", "—")
-
-            # ---- Small HTML tables ----
-            def make_table(data_rows):
-                if not data_rows:
-                    return "<p>No data</p>"
-                headers = list(data_rows[0].keys())
-                html_rows = [
-                    "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"
-                ]
-                for row in data_rows:
-                    html_rows.append(
-                        "<tr>" + "".join(f"<td>{row.get(h,'')}</td>" for h in headers) + "</tr>"
-                    )
-                return (
-                    "<table border='1' cellspacing='0' cellpadding='4'>"
-                    + "".join(html_rows)
-                    + "</table>"
-                )
-
-            bet_table_html = make_table(bet_rows[:1]) if bet_rows else "<p>No BET parameters</p>"
-            pts_table_html = make_table(pts[:15]) if pts else "<p>No BET data points</p>"
-
-            # ---- Final HTML body for ELN ----
-            html_body = f"""
-            <h1>BET Measurement Report</h1>
-
-            <h2>Meta Data</h2>
-            <ul>
-              <li><strong>Measurement ID:</strong> {measurement_id}</li>
-              <li><strong>Date:</strong> {fi.get('date_of_measurement','')} {fi.get('time_of_measurement','')}</li>
-              <li><strong>Operator:</strong> {fi.get('comment2','')}</li>
-              <li><strong>Instrument:</strong> {fi.get('comment4','')}</li>
-              <li><strong>Internal Device ID:</strong> {internal_device_id}</li>
-              <li><strong>Serial #:</strong> {fi.get('serial_number','')}</li>
-              <li><strong>Version:</strong> {fi.get('version','')}</li>
-              <li><strong>Scientist (Sample Preparation):</strong> {scientist}</li>
-              <li><strong>Sample ID:</strong> {sample_id}</li>
-              <li><strong>Measurement Conditions:</strong> {comment3}</li>
-            </ul>
-
-            <h2>Experimental Procedure</h2>
-            <p>
-              {mass} g of the sample <strong>{scientist}_{sample_id}</strong>
-              were pretreated under the following conditions:
-              <strong>{comment3}</strong>.<br>
-              For the evaluation of the BET isotherm, <strong>{len(pts)}</strong> points
-              in a pressure range of <strong>{pmin}</strong> to <strong>{pmax}</strong> were considered.
-            </p>
-
-            <h2>Results</h2>
-            <p>
-              The sample exhibited a specific surface area of
-              <strong>{specific_surf_area}</strong> and a pore volume of
-              <strong>{pore_volume}</strong>.
-            </p>
-
-            <h3>BET Parameters</h3>
-            {bet_table_html}
-
-            <h3>BET Data Points (First 15)</h3>
-            {pts_table_html}
-            """
+            # Print some debug on console for you
+            print("\n[ELN] Creating experiment for file_id:", file_id)
+            print("[ELN] Measurement ID:", measurement_id)
+            print("[ELN] HTML body (first 500 chars):")
+            print(html_body[:500])
+            print("------- END OF PREVIEW -------\n")
 
             # ---- Create experiment in ELN ----
             try:
@@ -577,21 +611,33 @@ class PuraloxApp:
                 logging.exception("patch_experiment failed")
                 return jsonify({"ok": False, "stage": "patch", "error": str(e), "exp_id": exp_id}), 500
 
-            # ---- Attach BET plot (best-effort) ----
+            # ---- Attach BET plot (best-effort, honoring optional range) ----
             pts_for_plot = self.db.fetchall_dict(
                 "SELECT p_p0, p_va_p0_p FROM bet_data_points WHERE file_info_id=?",
                 (file_id,)
             )
             if pts_for_plot:
                 try:
-                    x = np.array([r["p_p0"] for r in pts_for_plot if r["p_p0"] is not None])
-                    y = np.array([r["p_va_p0_p"] for r in pts_for_plot if r["p_va_p0_p"] is not None])
-                    if len(x) and len(y):
+                    x_all = np.array([r["p_p0"] for r in pts_for_plot if r["p_p0"] is not None])
+                    y_all = np.array([r["p_va_p0_p"] for r in pts_for_plot if r["p_va_p0_p"] is not None])
+
+                    if len(x_all) and len(y_all):
+                        # Apply optional range from UI
+                        mask = np.ones_like(x_all, dtype=bool)
+                        if plot_xmin is not None:
+                            mask &= x_all >= plot_xmin
+                        if plot_xmax is not None:
+                            mask &= x_all <= plot_xmax
+
+                        x = x_all[mask]
+                        y = y_all[mask]
+
+                        # Fallback: if filter removes everything, use full range
+                        if not len(x) or not len(y):
+                            x, y = x_all, y_all
+
                         fig, ax = plt.subplots()
                         ax.scatter(x, y, s=20)
-                        if len(x) >= 2:
-                            fit = np.polyfit(x, y, 1)
-                            ax.plot(x, np.poly1d(fit)(x), linestyle="--")
                         ax.set_title("BET Plot")
                         ax.set_xlabel("p/p0")
                         ax.set_ylabel("p/va_p0_p")
@@ -615,7 +661,13 @@ class PuraloxApp:
                             files=files,
                             verify=self.verify_ssl
                         )
-                        logging.debug("Upload plot resp: %s %s", resp.status_code, resp.text)
+                        logging.debug(
+                            "Upload plot resp: %s %s (range: %s – %s)",
+                            resp.status_code,
+                            resp.text,
+                            plot_xmin,
+                            plot_xmax,
+                        )
                 except Exception:
                     logging.exception("Plot upload failed (non-fatal)")
 
@@ -648,283 +700,12 @@ class PuraloxApp:
             logging.exception("eln_create_local_json outer failure")
             return jsonify({"ok": False, "stage": "unknown", "error": str(e)}), 500
 
-    # ─── Metadata Excel (unified Excel + PDF) ────────────────────────
-    def _summary_map(self, file_id: int) -> dict:
-        if not self._table_exists("bet_summaries"):
-            return {}
-        rows = self.db.fetchall_dict(
-            "SELECT key, value FROM bet_summaries WHERE file_info_id=?",
-            (file_id,)
-        )
-        return {r["key"]: r["value"] for r in rows}
-
-    def _generate_metadata(self, file_id: int):
-        fi_rows = self.db.fetchall_dict("SELECT * FROM file_info WHERE id=?", (file_id,))
-        if not fi_rows:
-            raise RuntimeError(f"file_info row not found for id={file_id}")
-        fi = fi_rows[0]
-        bet_rows = self.db.fetchall_dict(
-            "SELECT * FROM bet_parameters WHERE file_info_id=?", (file_id,)
-        )
-        bet = bet_rows[0] if bet_rows else {}
-        pts = self.db.fetchall_dict(
-            "SELECT p_p0 FROM bet_data_points WHERE file_info_id=?",
-            (file_id,)
-        )
-        kv  = self._summary_map(file_id)
-
-        # P/Po stats
-        try:
-            pvals = [r["p_p0"] for r in pts if r["p_p0"] is not None]
-            pmin = min(pvals) if pvals else ""
-            pmax = max(pvals) if pvals else ""
-            pcount = len(pvals)
-        except Exception:
-            pmin = pmax = ""
-            pcount = 0
-
-        def pick(*candidates):
-            for c in candidates:
-                if c is None:
-                    continue
-                s = str(c).strip()
-                if s and s.lower() != "none":
-                    return s
-            return ""
-
-        sample_weight   = pick(bet.get("sample_weight"), kv.get("general:Sample weight"))
-        adsorptive      = pick(bet.get("adsorptive"), kv.get("general:Analysis gas"))
-        apparatus_temp  = pick(bet.get("apparatus_temperature"), kv.get("general:Bath Temp"))
-        adsorption_temp = pick(bet.get("adsorption_temperature"), kv.get("general:OutgasTemp"))
-
-        specific_surface_area = pick(
-            bet.get("as_bet"),
-            kv.get("multipoint_bet_summary: Surface Area"),
-            kv.get("isotherm_summary: Surface Area"),
-            kv.get("isotherm_summary:Surface Area"),
-        )
-        total_pore_volume = pick(
-            bet.get("total_pore_volume"),
-            kv.get("tplot_summary: Pore Volume"),
-            kv.get("tplot_summary:Pore Volume"),
-        )
-        avg_pore_diam = pick(
-            bet.get("average_pore_diameter"),
-            kv.get("tplot_summary: Pore Diameter Dv(d)"),
-            kv.get("tplot_summary:Pore Diameter Dv(d)"),
-        )
-
-        md = {
-            "File Name":                      fi.get("file_name", ""),
-            "timestamp":                      f"{fi.get('date_of_measurement','')}T{fi.get('time_of_measurement','')}Z",
-            "sample":                         fi.get("file_name", ""),
-            "operator of experiment":         pick(fi.get("comment2"), kv.get("general:OperatorPrimary"), kv.get("general:Operators")),
-            "pretreatment conditions":        fi.get("comment3", ""),
-            "manufacturer":                   "BEL, BEL",
-            "measurement device":             pick(fi.get("comment4"), kv.get("general:Instrument"), "BELprep II, BELsorp II mini instrument"),
-            "serial number":                  fi.get("serial_number", ""),
-            "Version":                        fi.get("version", ""),
-
-            "Sample weight [g]":              sample_weight,
-            "Standard volume [cm3]":          pick(bet.get("standard_volume")),
-            "Dead volume [cm3]":              pick(bet.get("dead_volume")),
-            "Equilibrium time [sec]":         pick(bet.get("equilibrium_time")),
-            "Adsorptive":                     adsorptive,
-            "Apparatus temperature [C]":      apparatus_temp,
-            "Adsorption temperature [K]":     adsorption_temp,
-
-            "BET points (count)":             pcount,
-            "BET P/Po min":                   pmin,
-            "BET P/Po max":                   pmax,
-
-            "Specific surface area":          specific_surface_area,
-            "Total pore volume":              total_pore_volume,
-            "Average pore diameter":          avg_pore_diam,
-        }
-
-        df = pd.DataFrame(md.items(), columns=["Field", "Value"])
-        base = os.path.splitext(fi.get("file_name", "file"))[0] or f"file_{file_id}"
-        md_file = os.path.join(self.metadata_dir, f"{base}_metadata.xlsx")
-        df.to_excel(md_file, index=False)
-        logging.info("Unified Metadata Excel written to %s", md_file)
-        return md_file
-
     # ─── PDF bundle → DB ──────────────────────────────────────────────
     def _insert_pdf_bundle_into_db(self, bundle: dict, original_filename: str | None = None) -> int:
-        gen = (bundle.get("general") or {})
-        iso = (bundle.get("isotherm_summary") or {})
-        mp  = (bundle.get("multipoint_bet_summary") or {})
-        tp  = (bundle.get("tplot_summary") or {})
+        """LEGACY wrapper: PDF insertion is now handled by PdfProcessor."""
+        return self.pdf_processor._insert_pdf_bundle_into_db(bundle, original_filename=original_filename)
 
-        # Instrument's own measurement file (often .qps)
-        measurement_filename = gen.get("Filename") or gen.get("Sample ID") or ""
 
-        # For type detection we want the uploaded PDF name here
-        file_name = original_filename or measurement_filename or "BET_PDF_Report.pdf"
-
-        date_str, time_str = "", ""
-        if isinstance(gen.get("Dates"), list) and gen["Dates"]:
-            date_full = str(gen["Dates"][0])
-            parts = date_full.split()
-            if len(parts) >= 1:
-                date_str = parts[0]
-            if len(parts) >= 2:
-                time_str = parts[1]
-
-        # operator: pick one name only
-        operator_primary = gen.get("OperatorPrimary") or \
-            (gen.get("Operators")[0] if isinstance(gen.get("Operators"), list) and gen["Operators"] else "")
-
-        # pretreatment / measurement conditions from PDF fields
-        parts = []
-        if gen.get("OutgasTemp"):
-            parts.append(str(gen["OutgasTemp"]))
-        if gen.get("Outgas Time"):
-            parts.append(str(gen["Outgas Time"]))
-        if gen.get("Analysis gas"):
-            parts.append(str(gen["Analysis gas"]))
-        pretreat_str = ", ".join(parts)
-
-        file_info = {
-            "file_name": file_name,
-            "date_of_measurement": date_str,
-            "time_of_measurement": time_str,
-            "comment1": measurement_filename or gen.get("Comment", ""),
-            "comment2": operator_primary,
-            "comment3": pretreat_str,
-            "comment4": gen.get("Instrument", ""),
-            "serial_number": "",
-            "version": ""
-        }
-        fid = self.db.execute(
-            """
-            INSERT INTO file_info
-               (file_name, date_of_measurement, time_of_measurement,
-                comment1, comment2, comment3, comment4, serial_number, version)
-            VALUES (:file_name, :date_of_measurement, :time_of_measurement,
-                    :comment1, :comment2, :comment3, :comment4, :serial_number, :version)
-            """,
-            file_info
-        )
-
-        # Measurement ID for PDFs too
-        measurement_id = build_measurement_id(
-            file_id=fid,
-            file_name=file_info["file_name"],
-            date_of_measurement=file_info["date_of_measurement"],
-            time_of_measurement=file_info["time_of_measurement"],
-            operator=file_info["comment2"],
-            instrument=file_info["comment4"],
-            serial_number=file_info["serial_number"],
-            comment1=file_info["comment1"],
-            comment3=file_info["comment3"],
-        )
-        self.db.execute(
-            "UPDATE file_info SET comment5=? WHERE id=?",
-            (measurement_id, fid)
-        )
-
-        def _num(s):
-            if not s:
-                return None
-            m = re.search(r"[-+]?\d+(\.\d+)?", str(s))
-            return float(m.group(0)) if m else None
-
-        bet_params = {
-            "file_info_id": fid,
-            "sample_weight": _num(gen.get("Sample weight")),
-            "standard_volume": None,
-            "dead_volume": None,
-            "equilibrium_time": None,
-            "adsorptive": gen.get("Analysis gas", ""),
-            "apparatus_temperature": None,
-            "adsorption_temperature": None,
-            "starting_point": None,
-            "end_point": None,
-            "slore": _num(iso.get("Isotherm Slope")),
-            "intercept": _num(iso.get("Isotherm Intercept")),
-            "correlation_coefficient": _num(iso.get("Isotherm r")),
-            "vm": None,
-            "as_bet": _num(iso.get("Surface Area") or mp.get("Surface Area")),
-            "c_value": _num(iso.get("C constant")),
-            "total_pore_volume": _num(tp.get("Pore Volume")),
-            "average_pore_diameter": _num(tp.get("Pore Diameter Dv(d)"))
-        }
-        cols = ", ".join(bet_params.keys())
-        ph   = ", ".join(":" + k for k in bet_params)
-        self.db.execute(f"INSERT INTO bet_parameters ({cols}) VALUES ({ph})", bet_params)
-
-        # Save summaries (for PDF detail view + metadata)
-        def _insert_summary(prefix: str, dct: dict):
-            if not dct:
-                return
-            for k, v in dct.items():
-                # Special handling for general:Dates to avoid huge lists
-                if prefix == "general" and k == "Dates":
-                    if isinstance(v, (list, tuple)):
-                        uniq = []
-                        for d in v:
-                            if d not in uniq:
-                                uniq.append(d)
-                        if len(uniq) == 0:
-                            v_str = ""
-                        elif len(uniq) == 1:
-                            v_str = uniq[0]
-                        else:
-                            v_str = f"{uniq[0]} – {uniq[-1]}"
-                    else:
-                        v_str = str(v) if v is not None else None
-                else:
-                    v_str = str(v) if v is not None else None
-
-                self.db.execute(
-                    "INSERT INTO bet_summaries (file_info_id, key, value) VALUES (?, ?, ?)",
-                    (fid, f"{prefix}:{k}", v_str)
-                )
-
-        _insert_summary("general", gen)
-        _insert_summary("isotherm_summary", iso)
-        _insert_summary("multipoint_bet_summary", mp)
-        _insert_summary("tplot_summary", tp)
-
-        # Insert isotherm points from CSV (if available)
-        csvs = (bundle.get("csvs") or {})
-        iso_csv = csvs.get("isotherm")
-        if iso_csv and os.path.exists(iso_csv):
-            try:
-                df_pts = pd.read_csv(iso_csv)
-                for idx, r in df_pts.iterrows():
-                    ppo = float(r.get("P_over_P0"))
-                    vol = float(r.get("Vol_cc_g_STP"))
-                    self.db.execute(
-                        "INSERT INTO bet_data_points (file_info_id, no, p_p0, p_va_p0_p) "
-                        "VALUES (?, ?, ?, ?)",
-                        (fid, idx + 1, ppo, vol)
-                    )
-                # Plot column names
-                self.db.execute(
-                    "INSERT INTO bet_plot_columns (file_info_id, col_index, col_name) VALUES (?, ?, ?)",
-                    (fid, 1, "P_over_P0")
-                )
-                self.db.execute(
-                    "INSERT INTO bet_plot_columns (file_info_id, col_index, col_name) VALUES (?, ?, ?)",
-                    (fid, 2, "Vol_cc_g_STP")
-                )
-            except Exception as e:
-                logging.exception("Failed to import isotherm CSV into DB: %s", e)
-
-        # minimal technical_info row
-        self.db.execute(
-            """
-            INSERT INTO technical_info
-               (file_info_id, saturated_vapor_pressure, adsorption_cross_section,
-                wall_adsorption_correction1, wall_adsorption_correction2,
-                num_adsorption_points, num_desorption_points)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (fid, None, None, "", "", None, None)
-        )
-        return fid
 
     # ─── Run ───────────────────────────────────────────────────────────
     def run(self):

@@ -1,10 +1,29 @@
 import pandas as pd
+from abc import ABC, abstractmethod
+from typing import Optional
+
 from .nomenclature import build_measurement_id
 
 
-class ExcelProcessor:
+class BaseImporter(ABC):
+    """
+    Abstract importer contract so Excel + PDF share a single interface.
+    This is what gives you real UML inheritance (generalization).
+    """
+
+    @abstractmethod
+    def import_file(self, path: str, original_filename: Optional[str] = None) -> int:
+        """Import file into DB and return file_info_id."""
+        raise NotImplementedError
+
+
+class ExcelProcessor(BaseImporter):
     def __init__(self, db_manager):
         self.db = db_manager
+
+    # Polymorphic entrypoint (keeps existing behavior)
+    def import_file(self, path: str, original_filename: Optional[str] = None) -> int:
+        return self.process_file(path)
 
     @staticmethod
     def to_float(val):
@@ -48,7 +67,7 @@ class ExcelProcessor:
             file_info
         )
 
-        # --- NEW: auto-generate Measurement ID and store in comment5 ---
+        # --- auto-generate Measurement ID and store in comment5 ---
         measurement_id = build_measurement_id(
             file_id=fid,
             file_name=file_info['file_name'],
@@ -60,7 +79,6 @@ class ExcelProcessor:
             comment1=file_info['comment1'],
             comment3=file_info['comment3'],
         )
-        # requires comment5 column to exist on file_info
         self.db.execute(
             "UPDATE file_info SET comment5=? WHERE id=?",
             (measurement_id, fid)
@@ -76,61 +94,76 @@ class ExcelProcessor:
             'adsorptive':              str(df.iloc[15, 2]),
             'apparatus_temperature':   self.to_float(df.iloc[16, 2]),
             'adsorption_temperature':  self.to_float(df.iloc[17, 2]),
-            'starting_point':          self.to_int(df.iloc[19, 3]),
-            'end_point':               self.to_int(df.iloc[20, 3]),
-            'slore':                   self.to_float(df.iloc[21, 3]),
-            'intercept':               self.to_float(df.iloc[22, 3]),
-            'correlation_coefficient': self.to_float(df.iloc[23, 3]),
-            'vm':                      self.to_float(df.iloc[24, 3]),
-            'as_bet':                  self.to_float(df.iloc[25, 3]),
-            'c_value':                 self.to_float(df.iloc[26, 3]),
-            'total_pore_volume':       self.to_float(df.iloc[27, 3]),
-            'average_pore_diameter':   self.to_float(df.iloc[28, 3]),
+            'starting_point':          self.to_int(df.iloc[18, 2]),
+            'end_point':               self.to_int(df.iloc[19, 2]),
+            'slore':                   self.to_float(df.iloc[20, 2]),
+            'intercept':               self.to_float(df.iloc[21, 2]),
+            'correlation_coefficient': self.to_float(df.iloc[22, 2]),
+            'vm':                      self.to_float(df.iloc[23, 2]),
+            'as_bet':                  self.to_float(df.iloc[24, 2]),
+            'c_value':                 self.to_float(df.iloc[25, 2]),
+            'total_pore_volume':       self.to_float(df.iloc[26, 2]),
+            'average_pore_diameter':   self.to_float(df.iloc[27, 2]),
         }
-        cols = ', '.join(params.keys())
-        placeholders = ', '.join(':'+k for k in params)
         self.db.execute(
-            f'INSERT INTO bet_parameters ({cols}) VALUES ({placeholders})',
+            '''INSERT INTO bet_parameters
+               (file_info_id, sample_weight, standard_volume, dead_volume,
+                equilibrium_time, adsorptive, apparatus_temperature,
+                adsorption_temperature, starting_point, end_point, slore,
+                intercept, correlation_coefficient, vm, as_bet, c_value,
+                total_pore_volume, average_pore_diameter)
+               VALUES (:file_info_id, :sample_weight, :standard_volume, :dead_volume,
+                       :equilibrium_time, :adsorptive, :apparatus_temperature,
+                       :adsorption_temperature, :starting_point, :end_point, :slore,
+                       :intercept, :correlation_coefficient, :vm, :as_bet, :c_value,
+                       :total_pore_volume, :average_pore_diameter)''',
             params
         )
 
         # --- Technical Info ---
         tech = {
-            'file_info_id':                fid,
-            'saturated_vapor_pressure':    self.to_float(df.iloc[11, 7]),
-            'adsorption_cross_section':    self.to_float(df.iloc[12, 7]),
-            'wall_adsorption_correction1': str(df.iloc[13, 4]),
-            'wall_adsorption_correction2': str(df.iloc[14, 4]),
-            'num_adsorption_points':       self.to_int(df.iloc[15, 4]),
-            'num_desorption_points':       self.to_int(df.iloc[16, 4]),
+            'file_info_id': fid,
+            'saturated_vapor_pressure':     self.to_float(df.iloc[29, 2]),
+            'adsorption_cross_section':     self.to_float(df.iloc[30, 2]),
+            'wall_adsorption_correction1':  str(df.iloc[31, 2]),
+            'wall_adsorption_correction2':  str(df.iloc[32, 2]),
+            'num_adsorption_points':        self.to_int(df.iloc[33, 2]),
+            'num_desorption_points':        self.to_int(df.iloc[34, 2]),
+            'mass':                         self.to_float(df.iloc[35, 2]) if df.shape[0] > 35 else None,
+            'internal_device_id':           str(df.iloc[36, 2]) if df.shape[0] > 36 else None,
         }
-        tcols = ', '.join(tech.keys())
-        tph   = ', '.join(':'+k for k in tech)
         self.db.execute(
-            f'INSERT INTO technical_info ({tcols}) VALUES ({tph})',
+            '''INSERT INTO technical_info
+               (file_info_id, saturated_vapor_pressure, adsorption_cross_section,
+                wall_adsorption_correction1, wall_adsorption_correction2,
+                num_adsorption_points, num_desorption_points, mass, internal_device_id)
+               VALUES (:file_info_id, :saturated_vapor_pressure, :adsorption_cross_section,
+                       :wall_adsorption_correction1, :wall_adsorption_correction2,
+                       :num_adsorption_points, :num_desorption_points, :mass, :internal_device_id)''',
             tech
         )
 
         # --- Plot Columns ---
-        header_row = df.iloc[30]
-        for idx, col in header_row.items():
-            if pd.notna(col):
+        for col_index in range(1, 5):
+            col_name = str(df.iloc[38, col_index]) if df.shape[1] > col_index else None
+            if col_name and col_name.lower() != "nan":
                 self.db.execute(
-                    'INSERT INTO bet_plot_columns (file_info_id, col_index, col_name) VALUES (?, ?, ?)',
-                    (fid, int(idx), str(col))
+                    "INSERT INTO bet_plot_columns (file_info_id, col_index, col_name) VALUES (?, ?, ?)",
+                    (fid, col_index, col_name)
                 )
 
         # --- Data Points ---
-        for i in range(31, len(df)):
-            row = df.iloc[i]
-            no   = self.to_int(row[0])
-            p_p0 = self.to_float(row[1])
-            p_va = self.to_float(row[2])
-            if None not in (no, p_p0, p_va):
-                self.db.execute(
-                    'INSERT INTO bet_data_points (file_info_id, no, p_p0, p_va_p0_p) VALUES (?, ?, ?, ?)',
-                    (fid, no, p_p0, p_va)
-                )
+        start_row = 39
+        no = 1
+        while start_row + no < df.shape[0]:
+            p_p0 = self.to_float(df.iloc[start_row + no, 1]) if df.shape[1] > 1 else None
+            p_va = self.to_float(df.iloc[start_row + no, 2]) if df.shape[1] > 2 else None
+            if p_p0 is None and p_va is None:
+                break
+            self.db.execute(
+                "INSERT INTO bet_data_points (file_info_id, no, p_p0, p_va_p0_p) VALUES (?, ?, ?, ?)",
+                (fid, no, p_p0, p_va)
+            )
+            no += 1
 
-        # Return the new file_info ID
         return fid

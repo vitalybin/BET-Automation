@@ -5,7 +5,6 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-
     def __init__(self, db_path):
         self.db_path = db_path
         self._ensure()
@@ -28,7 +27,7 @@ class DatabaseManager:
         conn = self.connect()
         try:
             cur = conn.cursor()
-            if params:
+            if params is not None:
                 cur.execute(sql, params)
             else:
                 cur.execute(sql)
@@ -48,7 +47,7 @@ class DatabaseManager:
         conn = self.connect()
         try:
             cur = conn.cursor()
-            if params:
+            if params is not None:
                 cur.execute(sql, params)
             else:
                 cur.execute(sql)
@@ -68,18 +67,40 @@ class DatabaseManager:
         conn = self.connect()
         try:
             cur = conn.cursor()
-            if params:
+            if params is not None:
                 cur.execute(sql, params)
             else:
                 cur.execute(sql)
             conn.commit()
-            last_id = cur.lastrowid
-            return last_id
+            return cur.lastrowid
         except sqlite3.OperationalError as e:
             logger.exception("SQLite OperationalError in execute: %s", e)
             raise
         except Exception as e:
             logger.exception("Database error in execute: %s", e)
+            raise
+        finally:
+            conn.close()
+
+    # -----------------------------
+    # Bulk helpers (needed by PdfProcessor and others)
+    # -----------------------------
+    def execute_returning_id(self, sql, params=None):
+        # execute() already returns lastrowid for INSERTs.
+        return self.execute(sql, params)
+
+    def executemany(self, sql, seq_of_params):
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            cur.executemany(sql, seq_of_params)
+            conn.commit()
+            return cur.rowcount
+        except sqlite3.OperationalError as e:
+            logger.exception("SQLite OperationalError in executemany: %s", e)
+            raise
+        except Exception as e:
+            logger.exception("Database error in executemany: %s", e)
             raise
         finally:
             conn.close()

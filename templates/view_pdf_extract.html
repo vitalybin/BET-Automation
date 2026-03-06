@@ -1,299 +1,493 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>BET PDF View – {{ pdf_filename }}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <!-- Bootstrap 5 -->
+  <title>PDF BET Extract</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
   <style>
     body { background:#f7f8fa; }
-    .card { border-radius:14px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
-    .section-title {
-      font-size: .9rem;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      font-weight: 600;
-      color:#6c757d;
-      margin-bottom:.5rem;
-    }
-    .pill-badge {
+    .card { border-radius:14px; box-shadow:0 4px 18px rgba(0,0,0,.05); }
+    .status-pill {
       display:inline-flex;
       align-items:center;
-      gap:.35rem;
+      gap:.25rem;
       font-size:.8rem;
       border-radius:999px;
-      padding:.15rem .7rem;
-      background:#fef3c7;
-      color:#92400e;
+      padding:.15rem .6rem;
     }
-    .pill-badge span.dot {
-      width:.5rem;
-      height:.5rem;
-      border-radius:999px;
-      background:#f59e0b;
-      display:inline-block;
+    .chart-wrapper{
+      position:relative;
+      width:100%;
+      max-width:900px;
+      margin:0 auto;
+      height:380px;
     }
-    .table-sm td, .table-sm th {
-      padding:.3rem .5rem;
-      font-size:.8rem;
+    #betChart{
+      width:100% !important;
+      height:100% !important;
     }
-    .meta-grid dt {
-      font-size:.8rem;
+    .table-meta th{
+      width:40%;
+      font-weight:600;
+    }
+    .badge-region{
+      font-size:.75rem;
       text-transform:uppercase;
-      letter-spacing:.06em;
-      color:#6c757d;
+      letter-spacing:.04em;
     }
-    .meta-grid dd {
-      margin-bottom:.75rem;
-      font-weight:500;
+    .table-points thead th{
+      position:sticky;
+      top:0;
+      background:#fff;
+      z-index:1;
     }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="container py-4 py-md-5">
-  <!-- Header -->
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
-    <div>
-      <h1 class="h3 mb-1">📄 BET PDF Measurement – {{ pdf_filename }}</h1>
-      <p class="text-muted mb-0">
-        View of the extracted metadata and BET data points from the uploaded PDF report,
-        together with an interactive plot.
-      </p>
+
+  <!-- Header row -->
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div class="d-flex align-items-center gap-2">
+      <span class="fs-3">📄</span>
+      <div>
+        <h1 class="h4 mb-1 mb-md-0">PDF BET Extract</h1>
+        <div class="text-muted small">
+          File ID #{{ bundle.file_id }} –
+          <span class="badge bg-dark-subtle text-dark badge-region">
+            {{ sample_region }}
+          </span>
+        </div>
+      </div>
     </div>
     <div class="d-flex flex-wrap gap-2">
-      <a href="/files" class="btn btn-outline-secondary btn-sm">← Back to list</a>
+      <a href="/files" class="btn btn-outline-secondary btn-sm">← Back to files</a>
       <a href="{{ metadata_url }}" class="btn btn-outline-primary btn-sm">
-        Download Metadata (Excel)
+        Download metadata Excel
       </a>
     </div>
   </div>
 
-  <div class="row g-4">
-    <!-- Left column: clean meta + compact summary -->
-    <div class="col-lg-5">
-      <!-- Measurement meta -->
-      <div class="card mb-3">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <div class="section-title">Measurement Meta Data</div>
-              <h2 class="h5 mb-0">
-                {{ file_info.comment5 or file_info.comment1 or pdf_filename }}
-              </h2>
-            </div>
-            <div class="pill-badge">
-              <span class="dot"></span>
-              <span>PDF</span>
-            </div>
+  <!-- Measurement header + ELN push -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="row g-3 align-items-center">
+        <div class="col-md-7">
+          <h2 class="h5 mb-2">{{ header.measurement_id }}</h2>
+          <div class="small text-muted mb-1">
+            <strong>Date:</strong>
+            {% if header.date %}{{ header.date }}{% else %}—{% endif %}
+            {% if header.time %} {{ header.time }}{% endif %}
           </div>
+          <div class="small text-muted mb-1">
+            <strong>Operator:</strong> {{ header.operator or "—" }}
+          </div>
+          <div class="small text-muted mb-1">
+            <strong>Instrument:</strong> {{ header.instrument or "—" }}
+          </div>
+          <div class="small text-muted">
+            <strong>Serial #:</strong> {{ header.serial_number or "—" }}
+            &nbsp;&nbsp;|&nbsp;&nbsp;
+            <strong>Version:</strong> {{ header.version or "—" }}
+          </div>
+          <div class="small text-muted mt-1">
+            <strong>Points in DB:</strong> {{ bundle.points_count }}
+          </div>
+        </div>
 
-          <dl class="row meta-grid mb-0">
-            <dt class="col-5">Sample date</dt>
-            <dd class="col-7">
-              {{ file_info.date_of_measurement or '—' }}
-              {% if file_info.time_of_measurement %} {{ file_info.time_of_measurement }}{% endif %}
-            </dd>
+        <div class="col-md-5">
+          <div class="d-flex flex-column flex-sm-row justify-content-sm-end gap-2">
+            <!-- ELN status pill -->
+            <span id="eln-status-{{ bundle.file_id }}"
+                  class="status-pill bg-light text-muted">
+              <span>●</span><span>Not pushed from this view</span>
+            </span>
 
-            <dt class="col-5">Operator</dt>
-            <dd class="col-7">
-              {{ file_info.comment2 or '—' }}
-            </dd>
+            <!-- ELN push form with range -->
+            <form class="d-flex flex-wrap gap-2 align-items-center"
+                  onsubmit="return pushELN(event, {{ bundle.file_id }})">
+              <input type="number"
+                     name="template_id"
+                     class="form-control form-control-sm"
+                     style="max-width:90px"
+                     placeholder="Template"
+                     title="Optional ELN template ID (for tagging only)">
+              <input type="hidden" name="title"
+                     value="{{ header.measurement_id or ('File ' ~ bundle.file_id) }}">
+              <!-- range that gets sent to ELN -->
+              <input type="hidden" id="eln_plot_xmin" name="plot_xmin">
+              <input type="hidden" id="eln_plot_xmax" name="plot_xmax">
 
-            <dt class="col-5">Instrument</dt>
-            <dd class="col-7">
-              {{ file_info.comment4 or '—' }}
-            </dd>
+              <button type="submit" class="btn btn-success btn-sm">
+                Send to ELN
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-            <dt class="col-5">Serial #</dt>
-            <dd class="col-7">
-              {{ file_info.serial_number or '—' }}
-            </dd>
-
-            <dt class="col-5">Version</dt>
-            <dd class="col-7">
-              {{ file_info.version or '—' }}
-            </dd>
-
-            <dt class="col-5">Conditions</dt>
-            <dd class="col-7">
-              {{ file_info.comment3 or '—' }}
-            </dd>
-          </dl>
+  <!-- Plot + Range controls + BET points table -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div>
+          <h2 class="h5 mb-1">BET Plot (p/p₀ vs p/va_p₀-p)</h2>
+          <div class="text-muted small">
+            Grey line: complete extracted BET data.<br>
+            Colored line: central region (core BET range approximation) – original instrument
+            selection may differ.
+          </div>
+        </div>
+        <div class="small text-muted">
+          P/Po range: {% if default_x_min is not none %}{{ default_x_min }}{% else %}—{% endif %}
+          to {% if default_x_max is not none %}{{ default_x_max }}{% else %}—{% endif %}
         </div>
       </div>
 
-      <!-- Compact extracted summary (only BET / t-plot) -->
-      <div class="card mb-3">
+      <div class="chart-wrapper mb-3">
+        <canvas id="betChart"></canvas>
+      </div>
+
+      <!-- Range UI (this controls chart + what is sent to ELN) -->
+      <form class="row g-2 align-items-end mb-3">
+        <div class="col-6 col-md-3">
+          <label class="form-label form-label-sm">p/p₀ min</label>
+          <input type="number" step="0.0001" class="form-control form-control-sm"
+                 id="range_xmin"
+                 value="{% if default_x_min is not none %}{{ default_x_min }}{% endif %}">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label form-label-sm">p/p₀ max</label>
+          <input type="number" step="0.0001" class="form-control form-control-sm"
+                 id="range_xmax"
+                 value="{% if default_x_max is not none %}{{ default_x_max }}{% endif %}">
+        </div>
+        <div class="col-md-3">
+          <button type="button" class="btn btn-outline-primary btn-sm w-100"
+                  onclick="applyRange()">
+            Apply range to plot
+          </button>
+        </div>
+      </form>
+
+      <!-- BET points table -->
+      <h3 class="h6 mb-2">BET data points (from DB)</h3>
+      <p class="text-muted small">
+        First all points as imported from the isotherm CSV (p/p₀ vs p/va_p₀-p).
+      </p>
+      {% if pts_data and pts_data|length > 0 %}
+      <div class="table-responsive" style="max-height:260px;overflow:auto;">
+        <table class="table table-sm table-hover align-middle table-points mb-0">
+          <thead>
+          <tr>
+            <th class="text-muted">#</th>
+            <th class="text-muted">p/p₀</th>
+            <th class="text-muted">p/va_p₀-p</th>
+          </tr>
+          </thead>
+          <tbody>
+          {% for p in pts_data %}
+            <tr>
+              <td>{{ p.no }}</td>
+              <td>
+                {% if p.p_p0 is not none %}
+                  {{ "%.6f"|format(p.p_p0) }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if p.p_va_p0_p is not none %}
+                  {{ "%.6f"|format(p.p_va_p0_p) }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0"><em>No BET points available for this file.</em></p>
+      {% endif %}
+
+    </div>
+  </div>
+
+  <!-- Core metadata & non-core -->
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
         <div class="card-body">
-          <div class="section-title">Extracted Summary (BET / t-Plot)</div>
-          {% if bundle.summaries %}
-            <div class="table-responsive">
-              <table class="table table-sm table-striped mb-0">
-                <thead class="table-light">
-                  <tr>
-                    <th scope="col">Section</th>
-                    <th scope="col">Field</th>
-                    <th scope="col">Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                {% for s in bundle.summaries %}
-                  {% set parts = s.key.split(':', 1) %}
-                  <tr>
-                    <td class="text-nowrap">
-                      {{ parts[0].replace('_', ' ') }}
-                    </td>
-                    <td class="text-nowrap">
-                      {{ parts[1] if parts|length > 1 else '' }}
-                    </td>
-                    <td>{{ s.value }}</td>
-                  </tr>
-                {% endfor %}
-                </tbody>
-              </table>
-            </div>
+          <h2 class="h6 mb-3">Core metadata</h2>
+          <p class="text-muted small">
+            Key BET / t-plot values considered important (surface area, pore volume, etc.).
+          </p>
+
+          {% if core_fields and core_fields|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm table-borderless table-meta mb-0">
+              <tbody>
+              {% for row in core_fields %}
+                <tr>
+                  <th class="text-muted">{{ row.key }}</th>
+                  <td>{{ row.value }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
           {% else %}
-            <p class="text-muted mb-0"><em>No BET/t-Plot summary fields extracted.</em></p>
+          <p class="text-muted mb-0"><em>No core fields detected for this file.</em></p>
           {% endif %}
         </div>
       </div>
     </div>
 
-    <!-- Right column: Plot + raw data -->
-    <div class="col-lg-7">
-      <div class="card mb-3">
+    <!-- Non-core metadata -->
+    <div class="col-lg-6">
+      <div class="card h-100">
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <div class="section-title">BET Plot</div>
-              <h2 class="h5 mb-0">p/po vs p/va (BET transform)</h2>
-            </div>
+          <h2 class="h6 mb-3">Additional extracted fields</h2>
+          <p class="text-muted small">
+            Remaining fields from the PDF report (marked as non-core).
+          </p>
+
+          {% if extra_fields and extra_fields|length > 0 %}
+          <div class="table-responsive" style="max-height:260px;overflow:auto;">
+            <table class="table table-sm table-borderless table-meta mb-0">
+              <tbody>
+              {% for row in extra_fields %}
+                <tr>
+                  <th class="text-muted">{{ row.key }}</th>
+                  <td>{{ row.value }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
           </div>
-
-          {% if pts_data and pts_data|length > 1 %}
-            <canvas id="betChartPdf" style="max-height:420px;"></canvas>
           {% else %}
-            <p class="text-muted mb-0"><em>No valid BET points available to plot.</em></p>
-          {% endif %}
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div>
-              <div class="section-title">Raw Extracted BET Data</div>
-              <h2 class="h6 mb-0">
-                {{ pts_data|length if pts_data else 0 }} points
-              </h2>
-            </div>
-          </div>
-
-          {% if pts_data and pts_data|length > 0 %}
-            <div class="table-responsive">
-              <table class="table table-sm table-striped mb-0">
-                <thead class="table-light">
-                  <tr>
-                    <th scope="col">#</th>
-                    <th scope="col">p/p0</th>
-                    <th scope="col">p/va_p0_p</th>
-                  </tr>
-                </thead>
-                <tbody>
-                {% for p in pts_data %}
-                  <tr>
-                    <td>{{ p.no }}</td>
-                    <td>
-                      {% if p.p_p0 is not none %}
-                        {{ "%.5f"|format(p.p_p0) }}
-                      {% else %}
-                        —
-                      {% endif %}
-                    </td>
-                    <td>
-                      {% if p.p_va_p0_p is not none %}
-                        {{ "%.5f"|format(p.p_va_p0_p) }}
-                      {% else %}
-                        —
-                      {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0"><em>No BET data points stored for this PDF.</em></p>
+          <p class="text-muted mb-0"><em>No additional fields stored.</em></p>
           {% endif %}
         </div>
       </div>
     </div>
   </div>
+
 </div>
 
 <script>
-(function() {
-  const ptsData = {{ pts_data|tojson }};
-  if (!ptsData || ptsData.length < 2) return;
+  // -------------------------------
+  // Status pill helpers
+  // -------------------------------
+  function setStatus(fileId, state, message) {
+    const el = document.getElementById('eln-status-' + fileId);
+    if (!el) return;
+    const dotSpan  = el.querySelector('span:first-child');
+    const textSpan = el.querySelector('span:last-child');
 
-  const xVals = ptsData.map(p => p.p_p0);
-  const yVals = ptsData.map(p => p.p_va_p0_p);
+    el.classList.remove('bg-light','text-muted','bg-warning','text-dark',
+                        'bg-success','text-white','bg-danger');
 
-  const ctx = document.getElementById('betChartPdf');
-  if (!ctx) return;
+    if (state === 'idle') {
+      el.classList.add('bg-light','text-muted');
+      dotSpan.textContent = '●';
+      textSpan.textContent = message || 'Not pushed';
+    } else if (state === 'pushing') {
+      el.classList.add('bg-warning','text-dark');
+      dotSpan.textContent = '●';
+      textSpan.textContent = message || 'Pushing…';
+    } else if (state === 'ok') {
+      el.classList.add('bg-success','text-white');
+      dotSpan.textContent = '✔';
+      textSpan.textContent = message || 'Pushed OK';
+    } else if (state === 'error') {
+      el.classList.add('bg-danger','text-white');
+      dotSpan.textContent = '✖';
+      textSpan.textContent = message || 'Failed';
+    }
+  }
 
-  const data = {
-    labels: xVals,
-    datasets: [
-      {
-        label: 'BET data (p/po vs p/va_p0_p)',
-        data: yVals,
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        tension: 0.1
+  async function pushELN(ev, fileId) {
+    ev.preventDefault();
+    const form = ev.target;
+    const btn  = form.querySelector('button[type="submit"]');
+    const fd   = new FormData(form);
+    const origHtml = btn.innerHTML;
+
+    // copy current range into hidden inputs (for backend plot range)
+    const xminInput = document.getElementById('range_xmin');
+    const xmaxInput = document.getElementById('range_xmax');
+    const elnXmin   = document.getElementById('eln_plot_xmin');
+    const elnXmax   = document.getElementById('eln_plot_xmax');
+    if (elnXmin && xminInput) elnXmin.value = xminInput.value || '';
+    if (elnXmax && xmaxInput) elnXmax.value = xmaxInput.value || '';
+
+    btn.disabled = true;
+    btn.innerHTML = 'Pushing…';
+    setStatus(fileId, 'pushing', 'Pushing to ELN…');
+
+    try {
+      const r = await fetch(`/eln/${fileId}`, {
+        method: 'POST',
+        body: fd,
+        headers: { 'Accept': 'application/json' }
+      });
+
+      let data;
+      try {
+        data = await r.json();
+      } catch (e) {
+        setStatus(fileId, 'error', 'Invalid JSON from server');
+        alert('ELN push failed: invalid JSON from server');
+        return false;
       }
-    ]
-  };
 
-  const config = {
-    type: 'line',
-    data: data,
+      if (!r.ok || !data.ok) {
+        const msg = (data && data.error) ? data.error : r.statusText;
+        setStatus(fileId, 'error', msg);
+        alert('ELN push failed: ' + msg);
+      } else {
+        const msg = 'OK (ID ' + data.exp_id + ')';
+        setStatus(fileId, 'ok', msg);
+        alert('ELN created ✅  Experiment ID: ' + data.exp_id);
+      }
+    } catch (e) {
+      console.error('pushELN error', e);
+      setStatus(fileId, 'error', 'Network/JSON error');
+      alert('Network/JSON error: ' + e);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+    return false;
+  }
+
+  // -------------------------------
+  // Chart.js plot with core segment
+  // -------------------------------
+  const ptsData = {{ pts_data|tojson|safe }};
+  let allPoints = ptsData
+    .filter(p => p.p_p0 !== null && p.p_p0 !== undefined &&
+                 p.p_va_p0_p !== null && p.p_va_p0_p !== undefined)
+    .map(p => ({ x: p.p_p0, y: p.p_va_p0_p }))
+    .sort((a,b) => a.x - b.x);
+
+  const defaultXmin = {{ default_x_min if default_x_min is not none else 'null' }};
+  const defaultXmax = {{ default_x_max if default_x_max is not none else 'null' }};
+
+  const ctx = document.getElementById('betChart').getContext('2d');
+
+  function splitCoreSegment(points, xmin, xmax) {
+    if (!points.length) return { full: [], core: [] };
+
+    // Filter by range if provided
+    let inRange = points;
+    if (typeof xmin === 'number') inRange = inRange.filter(p => p.x >= xmin);
+    if (typeof xmax === 'number') inRange = inRange.filter(p => p.x <= xmax);
+
+    if (inRange.length < 3) {
+      return { full: points, core: [] };
+    }
+
+    // Take central 40% as "core" region visually
+    const n = inRange.length;
+    const start = Math.floor(n * 0.3);
+    const end   = Math.ceil(n * 0.7);
+    const core  = inRange.slice(start, end);
+
+    return { full: points, core: core };
+  }
+
+  let currentXmin = defaultXmin;
+  let currentXmax = defaultXmax;
+
+  const segments = splitCoreSegment(allPoints, currentXmin, currentXmax);
+
+  const betChart = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [
+        {
+          label: 'Full BET data',
+          data: segments.full,
+          showLine: true,
+          pointRadius: 2,
+          borderWidth: 1,
+          borderColor: 'rgba(140,140,140,0.9)',
+          backgroundColor: 'rgba(140,140,140,0.9)',
+          cubicInterpolationMode: 'monotone'
+        },
+        {
+          label: 'Core region (visual)',
+          data: segments.core,
+          showLine: true,
+          pointRadius: 2,
+          borderWidth: 2,
+          borderColor: 'rgba(33,150,243,1)',
+          backgroundColor: 'rgba(33,150,243,1)',
+          cubicInterpolationMode: 'monotone'
+        }
+      ]
+    },
     options: {
       responsive: true,
-      interaction: {
-        mode: 'nearest',
-        axis: 'x',
-        intersect: false
-      },
+      maintainAspectRatio: false,
       plugins: {
-        legend: { display: false },
+        legend: {
+          position: 'top',
+          labels: { boxWidth: 12, usePointStyle: true }
+        },
         tooltip: {
           callbacks: {
-            label: function(ctx) {
-              const x = ctx.label;
+            label: (ctx) => {
+              const x = ctx.parsed.x;
               const y = ctx.parsed.y;
-              return `p/po=${x}, p/va_p0_p=${y}`;
+              return `p/p₀=${x.toFixed(4)}, p/va_p₀-p=${y.toFixed(4)}`;
             }
           }
         }
       },
       scales: {
-        x: { title: { display: true, text: 'p/p0' } },
-        y: { title: { display: true, text: 'p/va_p0_p' } }
+        x: {
+          title: { display: true, text: 'p/p₀' },
+          min: currentXmin !== null ? currentXmin : undefined,
+          max: currentXmax !== null ? currentXmax : undefined,
+          grid: { display: true, color: 'rgba(0,0,0,0.06)' }
+        },
+        y: {
+          title: { display: true, text: 'p/va_p₀-p' },
+          grid: { display: true, color: 'rgba(0,0,0,0.06)' }
+        }
       }
     }
-  };
+  });
 
-  new Chart(ctx, config);
-})();
+  function applyRange() {
+    const xminStr = document.getElementById('range_xmin').value;
+    const xmaxStr = document.getElementById('range_xmax').value;
+
+    currentXmin = xminStr !== '' ? Number(xminStr) : null;
+    currentXmax = xmaxStr !== '' ? Number(xmaxStr) : null;
+
+    const seg = splitCoreSegment(allPoints, currentXmin, currentXmax);
+    betChart.data.datasets[0].data = seg.full;
+    betChart.data.datasets[1].data = seg.core;
+
+    betChart.options.scales.x.min =
+      currentXmin !== null && !Number.isNaN(currentXmin) ? currentXmin : undefined;
+    betChart.options.scales.x.max =
+      currentXmax !== null && !Number.isNaN(currentXmax) ? currentXmax : undefined;
+
+    betChart.update();
+  }
+
 </script>
-
 </body>
 </html>
