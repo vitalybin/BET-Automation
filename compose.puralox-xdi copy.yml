@@ -1,0 +1,19 @@
+services:
+  puralox-xdi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: puralox-xdi:latest
+    container_name: puralox-xdi
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    ports:
+      - "5000:5000"
+
+    volumes:
+      - ./data:/usr/src/app/data
+      - ./uploads:/usr/src/app/uploads
+      - ./metadata:/usr/src/app/metadata
